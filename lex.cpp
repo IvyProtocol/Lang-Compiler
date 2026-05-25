@@ -1,727 +1,750 @@
-#include <fstream>
-#include <sstream>
+#include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <print>
+#include <ranges>
+#include <span>
+#include <sstream>
 #include <sys/types.h>
 #include <vector>
-#include <cctype>
-#include <print>
 
+using u_char = unsigned char;
 enum class TokenType {
-  DECLARE,      // declare()
-  IMPORT,       // import()
-  FUNCTION,     // function name(type: Parmaeter) -> r_type: {}
-  IF,           // if (condition) {}
-  ELSEIF, // elseif (condition) {}
-  ELSE, // else {}
-  FOR, // for ( condition ) {}
-  WHILE, // while ( condition ) {}
-  LET, // let (x, y, z)
-  RETURN, // return(x, y, z)
-  TYPE_CAST, // typedef()
-  BREAK, // break
-  CONTINUE, // continue
-  OR, // or ||
-  AND, // and &&
-  TRUE, // true
-  FALSE, // false
-  MAIN, // function main(type: o_Param) -> int: {}
-  SWITCH, // switch (variable or something) { (options) => do; }
-  UNWRAP, // unwrap(variable)
-  EXIT, // exit(i)
-  EVAL,
-  ARROW, // ->
-  RANGE, // ..
-  PLUS_PLUS, // ++
-  MINUS_MINUS, // --
-  PLUS_EQUAL, // +=
-  MINUS_EQUAL, // -=
-  MUL_EQUAL, // *=
-  DIV_EQUAL, // /=
-  R_S_O,
-  L_S_O,
-  LTE, // <=
-  GTE, // >=
-  EQ, // ==
-  NEQ, // !=
-  MAP_ARROW, // =>
-  ASSIGN, // :=
-  PLUS, // +
-  MINUS, // -
-  MUL, // *
-  DIV, // '/'
-  MOD, // %
-  LT, // <
-  GT, // >
-  DOT, // '.'
-  BANG, // !
-  QUESTION, // ?
-  COLON, // :
-  SEMI_COLON, // ;
-  COMMA, // ,
-  L_PAREN, // (
-  R_PAREN, // )
-  LBRACE, // {
-  RBRACE, // }
-  LBRACKET, // [
-  RBRACKET, // ]
-  FLOAT, // float
-  FLOAT_LITERAL, // 0.0
-  INT, // int
-  INT_LITERAL, // 0
-  STRING, // str
-  STRING_LITERAL, // "hello"
+  IMPORT,             // import()
+  FUNCTION,           // function name(type: Parmaeter) -> r_type: {}
+  IF,                 // if (condition) {}
+  ELSEIF,             // elseif (condition) {}
+  ELSE,               // else {}
+  FOR,                // for ( condition ) {}
+  WHILE,              // while ( condition ) {}
+  LET,                // let (x, y, z)
+  RETURN,             // return(x, y, z)
+  TYPE_CAST,          // typedef()
+  BREAK,              // break
+  CONTINUE,           // continue
+  OR,                 // or ||
+  AND,                // and &&
+  TRUE,               // true
+  FALSE,              // false
+  MAIN,               // function main(type: o_Param) -> int: {}
+  SWITCH,             // switch (variable or something) { (options) => do; }
+  UNWRAP,             // unwrap(variable)
+  EXIT,               // exit(i)
+  DIRNAME,            // dirname(),
+  LENGTH,             // len()
+  JOIN,               // join()
+  STATUS,             // status()
+  EVAL,               // eval()
+  SYSCALL,            // syscall()
+  WRITE,              // write()
+  FMT,                // fmt()
+  PRINT,              // print()
+  GETENV,             // getenv()
+  SETENV,             // setenv()
+  EMPTY,              // empty()
+  HAS,                // has()
+  SED,                // sed()
+  FIND,               // find()
+  AMPERSAND,          // &
+  ARROW,              // ->
+  RANGE,              // ...
+  PLUS_PLUS,          // ++
+  MINUS_MINUS,        // --
+  PLUS_EQUAL,         // +=
+  MINUS_EQUAL,        // -=
+  MUL_EQUAL,          // *=
+  DIV_EQUAL,          // /=
+  R_S_O,              // <<
+  L_S_O,              // >>
+  LTE,                // <=
+  GTE,                // >=
+  EQ,                 // ==
+  NEQ,                // !=
+  MAP_ARROW,          // =>
+  ASSIGN,             // :=
+  PLUS,               // +
+  MINUS,              // -
+  MUL,                // *
+  DIV,                // '/'
+  MOD,                // %
+  LT,                 // <
+  GT,                 // >
+  DOT,                // '.'
+  BANG,               // !
+  QUESTION,           // ?
+  COLON,              // :
+  SEMI_COLON,         // ;
+  COMMA,              // ,
+  L_PAREN,            // (
+  R_PAREN,            // )
+  LBRACE,             // {
+  RBRACE,             // }
+  LBRACKET,           // [
+  RBRACKET,           // ]
+  FLOAT,              // float
+  FLOAT_LITERAL,      // 0.0
+  INT,                // int
+  INT_LITERAL,        // 0
+  STRING,             // str
+  STRING_LITERAL,     // "hello"
   RAW_STRING_LITERAL, // 'hello'
-  BOOL, // bool
-  AUTO, // auto
-  CONST, // const
-  IDENTIFIER // lkdsjf;saljf;lkdsajf
+  BACK_TICK_LITERAL,  // '`'
+  BOOL,               // bool
+  AUTO,               // auto
+  CONST,              // const
+  VOID,               // void
+  IDENTIFIER          // lkdsjf;saljf;lkdsajf
 };
 
 struct Token {
   TokenType type;
   long : 32;
-  std::vector<std::string> value;
+  std::string_view value;
+  size_t line;
+  size_t column;
 };
 
-inline bool peek_match (
-    const std::string& text,
-    size_t current_index,
-    char expected
-)
-{
-    if ( current_index + 1 >= text.length() ) return false;
-    return text.at(current_index + 1) == expected;
+inline bool peek_match(const std::string_view &text, size_t current_index,
+                       char expected) {
+  if (current_index + 1 >= text.length())
+    return false;
+  return text.at(current_index + 1) == expected;
 }
 
-inline TokenType identifier_or_keyword (const std::string& word) {
-    if ( word == "declare" ) return TokenType::DECLARE;
-    if ( word == "import" ) return TokenType::IMPORT;
-    if ( word == "function" ) return TokenType::FUNCTION;
-    if ( word == "if" ) return TokenType::IF;
-    if ( word == "elseif" ) return TokenType::ELSEIF;
-    if ( word == "else" ) return TokenType::ELSE;
-    if ( word == "for" ) return TokenType::FOR;
-    if ( word == "while" ) return TokenType::WHILE;
-    if ( word == "let" ) return TokenType::LET;
-    if ( word == "return" ) return TokenType::RETURN;
-    if ( word == "typedef") return TokenType::TYPE_CAST;
-    if ( word == "break" ) return TokenType::BREAK;
-    if ( word == "continue" ) return TokenType::CONTINUE;
-    if ( word == "or" ) return TokenType::OR;
-    if ( word == "and" ) return TokenType::AND;
-    if ( word == "true" ) return TokenType::TRUE;
-    if ( word == "false" ) return TokenType::FALSE;
-    if ( word == "main" ) return TokenType::MAIN;
-    if ( word == "switch" ) return TokenType::SWITCH;
-    if ( word == "unwrap" ) return TokenType::UNWRAP;
-    if ( word == "exit" ) return TokenType::EXIT;
-    if ( word == "eval" ) return TokenType::EVAL;
-    if ( word == "int" ) return TokenType::INT;
-    if ( word == "float" ) return TokenType::FLOAT;
-    if ( word == "str" ) return TokenType::STRING;
-    if ( word == "bool" ) return TokenType::BOOL;
-    if ( word == "auto" ) return TokenType::AUTO;
-    if ( word == "const" ) return TokenType::CONST;
-    return TokenType::IDENTIFIER;
+inline TokenType identifier_or_keyword(const std::string_view &word) {
+  if (word == "import")
+    return TokenType::IMPORT;
+  if (word == "function")
+    return TokenType::FUNCTION;
+  if (word == "if")
+    return TokenType::IF;
+  if (word == "elseif")
+    return TokenType::ELSEIF;
+  if (word == "else")
+    return TokenType::ELSE;
+  if (word == "for")
+    return TokenType::FOR;
+  if (word == "while")
+    return TokenType::WHILE;
+  if (word == "let")
+    return TokenType::LET;
+  if (word == "return")
+    return TokenType::RETURN;
+  if (word == "typedef")
+    return TokenType::TYPE_CAST;
+  if (word == "break")
+    return TokenType::BREAK;
+  if (word == "continue")
+    return TokenType::CONTINUE;
+  if (word == "or")
+    return TokenType::OR;
+  if (word == "and")
+    return TokenType::AND;
+  if (word == "true")
+    return TokenType::TRUE;
+  if (word == "false")
+    return TokenType::FALSE;
+  if (word == "main")
+    return TokenType::MAIN;
+  if (word == "switch")
+    return TokenType::SWITCH;
+  if (word == "unwrap")
+    return TokenType::UNWRAP;
+  if (word == "exit")
+    return TokenType::EXIT;
+  if (word == "dirname")
+    return TokenType::DIRNAME;
+  if (word == "len")
+    return TokenType::LENGTH;
+  if (word == "join")
+    return TokenType::JOIN;
+  if (word == "status")
+    return TokenType::STATUS;
+  if (word == "eval")
+    return TokenType::EVAL;
+  if (word == "syscall")
+    return TokenType::SYSCALL;
+  if (word == "write")
+    return TokenType::WRITE;
+  if (word == "fmt")
+    return TokenType::FMT;
+  if (word == "print")
+    return TokenType::PRINT;
+  if (word == "getenv")
+    return TokenType::GETENV;
+  if (word == "setenv")
+    return TokenType::SETENV;
+  if (word == "empty")
+    return TokenType::EMPTY;
+  if (word == "has")
+    return TokenType::HAS;
+  if (word == "sed")
+    return TokenType::SED;
+  if (word == "find")
+    return TokenType::FIND;
+
+  if (word == "int")
+    return TokenType::INT;
+  if (word == "float")
+    return TokenType::FLOAT;
+  if (word == "str")
+    return TokenType::STRING;
+  if (word == "bool")
+    return TokenType::BOOL;
+  if (word == "auto")
+    return TokenType::AUTO;
+  if (word == "const")
+    return TokenType::CONST;
+  if (word == "void")
+    return TokenType::VOID;
+  return TokenType::IDENTIFIER;
 }
 
-inline std::vector<Token> tokenize(const std::string& Toks) {
-    std::vector<Token> Tokens;
-    std::string buf = "";
+inline std::vector<Token> tokenize(const std::string_view &Toks) {
+  std::vector<Token> Tokens;
 
-    for ( size_t i {}; i < Toks.length(); i++ )
-    {
-        char c = Toks.at(i);
-
-        if ( std::isspace(static_cast<unsigned char>(c)) )
-        {
-            continue;
-        }
+  [[maybe_unused]] size_t c_line = 1;
+  [[maybe_unused]] size_t c_column = 1;
+  size_t i = 0;
+  while ( i < Toks.length() ) {
+    char c = Toks[i];
 
 
-        if ( c == '.' )
-        {
-            if ( peek_match(Toks, i, '.') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::RANGE, {".."}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::DOT, {"."}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '+' )
-        {
-            if ( peek_match(Toks, i, '+') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::PLUS_PLUS, {"++"}
-                    }
-                );
-                i++;
-            }
-            else if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::PLUS_EQUAL, {"+="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::PLUS, {"+"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '-' )
-        {
-            if ( peek_match(Toks, i, '>') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::ARROW, {"->"}
-                    }
-                );
-                i++;
-            }
-
-            else if ( peek_match(Toks, i, '-') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MINUS_MINUS, {"--"}
-                    }
-                );
-                i++;
-            }
-
-            else if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MINUS_EQUAL, {"-="}
-                    }
-                );
-                i++;
-            }
-
-            else {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MINUS, {"-"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '*' )
-        {
-            if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MUL_EQUAL, {"*="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MUL, {"*"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '/' )
-        {
-            if ( peek_match(Toks, i, '/') )
-            {
-                i++;
-                while ( i < Toks.length() && Toks.at(i) != '\n')
-                {
-                    i++;
-                }
-            }
-            else if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::DIV_EQUAL, {"/="}
-                    }
-                );
-                i++;
-            }
-            else if ( peek_match(Toks, i, '*') )
-            {
-                i += 2;
-                bool closed = false;
-                while ( i < Toks.length() )
-                {
-                    if ( Toks.at(i) == '*' && peek_match(Toks, i, '/') )
-                    {
-                        i++;
-                        closed = true;
-                        break;
-                    }
-                    i++;
-                }
-                if ( ! closed ) {
-                    std::println("Did you forget to add '/' beside *?");
-                    exit(1);
-                }
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::DIV, {"/"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '<' )
-        {
-            if ( peek_match(Toks, i, '<') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::L_S_O, {"<<"}
-                    }
-                );
-                i++;
-            }
-            else if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::LTE, {"<="}
-                    }
-                );
-                i++;
-            }
-
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::LT, {"<"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '>' )
-        {
-            if ( peek_match(Toks, i, '>') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::R_S_O, {">>"}
-                    }
-                );
-                i++;
-            }
-            else if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::GTE, {">="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::GT, {">"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '=' )
-        {
-            if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::EQ, {"=="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::MAP_ARROW, {"=>"}
-                    }
-                );
-                i++;
-            }
-            continue;
-        }
-
-        if ( c == '!' )
-        {
-            if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::NEQ, {"!="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::BANG, {"!"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == ':' )
-        {
-            if ( peek_match(Toks, i, '=') )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::ASSIGN, {":="}
-                    }
-                );
-                i++;
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::COLON, {":"}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( c == '%' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::MOD, {"%"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '?' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::QUESTION, {"?"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == ';' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::SEMI_COLON, {";"}
-                }
-            );
-        }
-
-        if ( c == '(' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::L_PAREN, {"("}
-                }
-            );
-            continue;
-        }
-
-        if ( c == ')' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::R_PAREN, {")"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '{' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::LBRACE, {"{"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '}' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::RBRACE, {"}"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '[' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::LBRACKET, {"["}
-                }
-            );
-            continue;
-        }
-
-        if ( c == ']' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::RBRACKET, {"]"}
-                }
-            );
-            continue;
-        }
-
-        if ( c == ',' )
-        {
-            Tokens.push_back
-            (
-                {
-                    TokenType::COMMA, {","}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '"' )
-        {
-            std::string str_val = "";
-            i++;
-            bool closed = false;
-
-            while ( i < Toks.length() )
-            {
-                if ( Toks.at(i) == '"' )
-                {
-                    closed = true;
-                    break;
-                }
-                str_val += Toks.at(i);
-                i++;
-            }
-
-            if ( ! closed )
-            {
-                std::println("ERR: Unclosed string literal!");
-                exit(1);
-            }
-            Tokens.push_back
-            (
-                {
-                    TokenType::STRING_LITERAL, {str_val}
-                }
-            );
-            continue;
-        }
-
-        if ( c == '\'')
-        {
-            i++;
-            std::string raw_str_val = "";
-            bool closed = false;
-
-            while ( i < Toks.length() )
-            {
-                if ( Toks.at(i) == '\'' )
-                {
-                    closed = true;
-                    break;
-                }
-                raw_str_val += Toks.at(i);
-                i++;
-            }
-
-            if ( ! closed )
-            {
-                std::println("[ERR] Unclosed raw-string literal!");
-                exit(1);
-            }
-
-            Tokens.push_back
-            (
-                {
-                    TokenType::RAW_STRING_LITERAL, {raw_str_val}
-                }
-            );
-            continue;
-
-        }
-
-        if ( std::isdigit( static_cast<unsigned char>(c) ) )
-        {
-            std::string num_val = "";
-            bool is_float = false;
-
-            while ( i < Toks.length() )
-            {
-                char current = Toks.at(i);
-                if ( std::isdigit( static_cast<unsigned char>(current) ) )
-                {
-                    num_val += current;
-                }
-                else if ( current == '.' && !is_float )
-                {
-                    if ( peek_match(Toks, i, '.') )
-                    {
-                        break;
-                    }
-                    is_float = true;
-                    num_val += current;
-                }
-                else
-                {
-                    break;
-                }
-                i++;
-            }
-            i--;
-
-            if ( ! is_float )
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::FLOAT_LITERAL, {num_val}
-                    }
-                );
-            }
-            else
-            {
-                Tokens.push_back
-                (
-                    {
-                        TokenType::INT_LITERAL, {num_val}
-                    }
-                );
-            }
-            continue;
-        }
-
-        if ( std::isalpha( static_cast<unsigned char>(c) ) )
-        {
-            buf.push_back(c);
-            i++;
-
-            while ( i < Toks.length() && std::isalnum(static_cast<unsigned char>(Toks.at(i))) )
-            {
-                buf.push_back(Toks.at(i));
-                i++;
-            }
-            i--;
-
-            std::string word
-            (
-                buf.begin(), buf.end()
-            );
-            Tokens.push_back
-            (
-                {
-                    TokenType::IDENTIFIER, {word}
-                }
-            );
-            buf.clear();
-        }
+    if (std::isspace(static_cast<u_char>(c))) {
+        if ( c == '\n') { c_line++; c_column = 1; }
+        else { c_column++; }
+        i++;
+        continue;
     }
-    return Tokens;
+
+    size_t t_s_column = c_column;
+
+    if (c == '&') {
+      Tokens.emplace_back(TokenType::AMPERSAND, Toks.substr(i, 1), c_line, c_column);
+      c_line++;
+      c_column++;
+      continue;
+    }
+
+    if (c == '.') {
+      if (peek_match(Toks, i, '.') && peek_match(Toks, i + 1, '.')) {
+        Tokens.emplace_back(TokenType::RANGE, Toks.substr(i, 3));
+        i += 2;
+      } else
+        Tokens.emplace_back(TokenType::DOT, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '+') {
+      if (peek_match(Toks, i, '+')) {
+        Tokens.emplace_back(TokenType::PLUS_PLUS, Toks.substr(i, 2));
+        i++;
+      } else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::PLUS_EQUAL, Toks.substr(i, 2));
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::PLUS, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '-') {
+      if (peek_match(Toks, i, '>')) {
+        Tokens.emplace_back(TokenType::ARROW, Toks.substr(i, 2));
+        i++;
+      }
+
+      else if (peek_match(Toks, i, '-')) {
+        Tokens.emplace_back(TokenType::MINUS_MINUS, Toks.substr(i, 2));
+        i++;
+      }
+
+      else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::MINUS_EQUAL, Toks.substr(i, 2));
+        i++;
+      }
+
+      else
+        Tokens.emplace_back(TokenType::MINUS, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '*') {
+      if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::MUL_EQUAL, Toks.substr(i, 2));
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::MUL, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '/') {
+      if (peek_match(Toks, i, '/')) {
+        i++;
+        while (i < Toks.length() && Toks[i] != '\n') {
+          i++;
+        }
+      } else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::DIV_EQUAL, Toks.substr(i, 2));
+        i++;
+      } else if (peek_match(Toks, i, '*')) {
+        i += 2;
+        bool closed = false;
+        while (i < Toks.length()) {
+          if (Toks[i] == '*' && peek_match(Toks, i, '/')) {
+            i++;
+            closed = true;
+            break;
+          }
+          i++;
+        }
+        if (!closed) {
+          std::println("Did you forget to add '/' beside *?");
+          exit(1);
+        }
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::DIV, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '<') {
+      if (peek_match(Toks, i, '<')) {
+        Tokens.emplace_back(TokenType::L_S_O, Toks.substr(i, 2));
+        i++;
+      } else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::LTE, Toks.substr(i, 2));
+        i++;
+      }
+
+      else
+        Tokens.emplace_back(TokenType::LT, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '>') {
+      if (peek_match(Toks, i, '>')) {
+        Tokens.emplace_back(TokenType::R_S_O, Toks.substr(i, 2));
+        i++;
+      } else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::GTE, Toks.substr(i, 2));
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::GT, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '=') {
+      if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::EQ, Toks.substr(i, 2));
+        i++;
+      } else if (peek_match(Toks, i, '>')) {
+        Tokens.emplace_back(TokenType::MAP_ARROW, Toks.substr(i, 2));
+        i++;
+      } else {
+        std::println("ERR: Unexpected single '='");
+      }
+      continue;
+    }
+
+    if (c == '!') {
+      if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::NEQ, Toks.substr(i, 2));
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::BANG, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == ':') {
+      if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::ASSIGN, Toks.substr(i, 2));
+        i++;
+      } else
+        Tokens.emplace_back(TokenType::COLON, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '%') {
+      Tokens.emplace_back(TokenType::MOD, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '?') {
+      Tokens.emplace_back(TokenType::QUESTION, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == ';') {
+      Tokens.emplace_back(TokenType::SEMI_COLON, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '(') {
+      Tokens.emplace_back(TokenType::L_PAREN, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == ')') {
+      Tokens.emplace_back(TokenType::R_PAREN, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '{') {
+      Tokens.emplace_back(TokenType::LBRACE, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '}') {
+      Tokens.emplace_back(TokenType::RBRACE, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '[') {
+      Tokens.emplace_back(TokenType::LBRACKET, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == ']') {
+      Tokens.emplace_back(TokenType::RBRACKET, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == ',') {
+      Tokens.emplace_back(TokenType::COMMA, Toks.substr(i, 1));
+      continue;
+    }
+
+    if (c == '"') {
+      size_t start = i + 1;
+      i++;
+      bool closed = false;
+
+      while (i < Toks.length()) {
+        if (Toks[i] == '"') {
+          closed = true;
+          break;
+        }
+        i++;
+      }
+
+      if (!closed) {
+        std::println("ERR: Unclosed string literal!");
+        exit(1);
+      }
+      Tokens.emplace_back(
+          TokenType::STRING_LITERAL, Toks.substr(start, i - start));
+      continue;
+    }
+
+    if (c == '\'') {
+      size_t start = i + 1;
+      i++;
+      bool closed = false;
+
+      while (i < Toks.length()) {
+        if (Toks[i] == '\'') {
+          closed = true;
+          break;
+        }
+        i++;
+      }
+
+      if (!closed) {
+        std::println("[ERR] Unclosed raw-string literal!");
+        exit(1);
+      }
+
+      Tokens.emplace_back(
+          TokenType::RAW_STRING_LITERAL, Toks.substr(start, i - start));
+      continue;
+    }
+
+    if (c == '`') {
+      size_t start = i + 1;
+      i++;
+      bool closed = false;
+
+      while (i < Toks.length()) {
+        if (Toks[i] == '`') {
+          closed = true;
+          break;
+        }
+        i++;
+      }
+
+      if (!closed) {
+        std::println("[ERR] Unclosed back-tick literal!");
+        exit(1);
+      }
+
+      Tokens.emplace_back(
+          TokenType::BACK_TICK_LITERAL, Toks.substr(start, i - start));
+      continue;
+    }
+
+    if (std::isdigit(static_cast<u_char>(c))) {
+      size_t start = i;
+      bool is_float = false;
+
+      while (i < Toks.length()) {
+        char current = Toks[i];
+        if (std::isdigit(static_cast<u_char>(current))) {
+        } else if (current == '.' && !is_float) {
+          if (peek_match(Toks, i, '.'))
+            break;
+          is_float = true;
+        } else {
+          break;
+        }
+        i++;
+      }
+      size_t length = i - start;
+      i--;
+
+      TokenType type =
+          is_float ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL;
+      Tokens.emplace_back(type, Toks.substr(start, length));
+
+      continue;
+    }
+
+    if (std::isalpha(static_cast<u_char>(c)) || c == '_') {
+      size_t start = i;
+
+      while (i < Toks.length()) {
+        char current = Toks[i];
+
+        if (std::isalnum(static_cast<u_char>(current)) ||
+            current == '_') {
+        } else {
+          break;
+        }
+        i++;
+      }
+      size_t length = i - start;
+      i--;
+
+      std::string_view word = Toks.substr(start, length);
+      TokenType type = identifier_or_keyword(word);
+      Tokens.emplace_back(type, word);
+    }
+
+    if (std::isspace(static_cast<u_char>(c))) {
+      continue;
+    }
+  }
+  return Tokens;
 }
 
-auto main ( void ) -> std::int32_t {
-    std::stringstream contents;
-    std::ifstream file {
-        static_cast<std::string>(
-            std::getenv("HOME")
-        ) + "/Templates/Nullix/rofilauncher.ts"
-    };
+inline std::string token_return(TokenType type) {
+  switch (type) {
+  case TokenType::IMPORT:
+    return "IMPORT";
+  case TokenType::FUNCTION:
+    return "FUNCTION";
+  case TokenType::IF:
+    return "IF";
+  case TokenType::ELSEIF:
+    return "ELSEIF";
+  case TokenType::ELSE:
+    return "ELSE";
+  case TokenType::FOR:
+    return "FOR";
+  case TokenType::WHILE:
+    return "WHILE";
+  case TokenType::LET:
+    return "LET";
+  case TokenType::RETURN:
+    return "RETURN";
+  case TokenType::TYPE_CAST:
+    return "TYPE_CAST";
+  case TokenType::BREAK:
+    return "BREAK";
+  case TokenType::CONTINUE:
+    return "CONTINUE";
+  case TokenType::OR:
+    return "OR";
+  case TokenType::AND:
+    return "AND";
+  case TokenType::TRUE:
+    return "TRUE";
+  case TokenType::FALSE:
+    return "FALSE";
+  case TokenType::MAIN:
+    return "MAIN";
+  case TokenType::SWITCH:
+    return "SWITCH";
+  case TokenType::UNWRAP:
+    return "UNWRAP";
+  case TokenType::EXIT:
+    return "EXIT";
+  case TokenType::DIRNAME:
+    return "DIRNAME";
+  case TokenType::LENGTH:
+    return "LENGTH";
+  case TokenType::JOIN:
+    return "JOIN";
+  case TokenType::STATUS:
+    return "STATUS";
+  case TokenType::EVAL:
+    return "EVAL";
+  case TokenType::SYSCALL:
+    return "SYSCALL";
+  case TokenType::WRITE:
+    return "WRITE";
+  case TokenType::FMT:
+    return "FMT";
+  case TokenType::PRINT:
+    return "PRINT";
+  case TokenType::GETENV:
+    return "GETENV";
+  case TokenType::SETENV:
+    return "SETENV";
+  case TokenType::HAS:
+    return "HAS";
+  case TokenType::SED:
+    return "SED";
+  case TokenType::FIND:
+    return "FIND";
+  case TokenType::EMPTY:
+    return "EMPTY";
+  case TokenType::AMPERSAND:
+    return "AMPERSAND";
+  case TokenType::ARROW:
+    return "ARROW";
+  case TokenType::RANGE:
+    return "RANGE";
+  case TokenType::PLUS_PLUS:
+    return "PLUS_PLUS";
+  case TokenType::MINUS_MINUS:
+    return "MINUS_MINUS";
+  case TokenType::PLUS_EQUAL:
+    return "PLUS_EQUAL";
+  case TokenType::MINUS_EQUAL:
+    return "MINUS_EQUAL";
+  case TokenType::R_S_O:
+    return "R_S_O";
+  case TokenType::L_S_O:
+    return "L_S_O";
+  case TokenType::MUL_EQUAL:
+    return "MUL_EQUAL";
+  case TokenType::DIV_EQUAL:
+    return "DIV_EQUAL";
+  case TokenType::LTE:
+    return "LTE";
+  case TokenType::GTE:
+    return "GTE";
+  case TokenType::EQ:
+    return "EQ";
+  case TokenType::NEQ:
+    return "NEQ";
+  case TokenType::MAP_ARROW:
+    return "MAP_ARROW";
+  case TokenType::ASSIGN:
+    return "ASSIGN";
+  case TokenType::PLUS:
+    return "PLUS";
+  case TokenType::MINUS:
+    return "MINUS";
+  case TokenType::MUL:
+    return "MUL";
+  case TokenType::DIV:
+    return "DIV";
+  case TokenType::MOD:
+    return "MOD";
+  case TokenType::LT:
+    return "LT";
+  case TokenType::GT:
+    return "GT";
+  case TokenType::DOT:
+    return "DOT";
+  case TokenType::BANG:
+    return "BANG";
+  case TokenType::QUESTION:
+    return "QUESTION";
+  case TokenType::COLON:
+    return "COLON";
+  case TokenType::SEMI_COLON:
+    return "SEMI_COLON";
+  case TokenType::COMMA:
+    return "COMMA";
+  case TokenType::L_PAREN:
+    return "L_PAREN";
+  case TokenType::R_PAREN:
+    return "R_PAREN";
+  case TokenType::LBRACE:
+    return "LBRACE";
+  case TokenType::RBRACE:
+    return "RBRACE";
+  case TokenType::LBRACKET:
+    return "LBRACKET";
+  case TokenType::RBRACKET:
+    return "RBRACKET";
+  case TokenType::FLOAT:
+    return "FLOAT";
+  case TokenType::FLOAT_LITERAL:
+    return "FLOAT_LITERAL";
+  case TokenType::INT:
+    return "INT";
+  case TokenType::INT_LITERAL:
+    return "INT_LITERAL";
+  case TokenType::STRING:
+    return "STRING";
+  case TokenType::STRING_LITERAL:
+    return "STRING_LITERAL";
+  case TokenType::RAW_STRING_LITERAL:
+    return "RAW_STRING_LITERAL";
+  case TokenType::BACK_TICK_LITERAL:
+    return "BACK_TICK_LITERAL";
+  case TokenType::BOOL:
+    return "BOOL";
+  case TokenType::AUTO:
+    return "AUTO";
+  case TokenType::CONST:
+    return "CONST";
+  case TokenType::VOID:
+    return "VOID";
+  case TokenType::IDENTIFIER:
+    return "IDENTIFIER";
+  default:
+    return "UNKNOWN";
+  }
+}
 
-    contents << file.rdbuf();
-    tokenize(contents.str());
+auto main(int argc, char *argv[]) -> std::int32_t {
+    // absolutely gorgeous
+  std::span<char const *const> _arguments{std::views::counted(argv, argc)};
 
+  if (_arguments.size() < 2) {
+    std::println("Error: A file input pathway is required.");
+    exit(1);
+  }
+
+  std::string_view _args = _arguments[1];
+
+  std::stringstream contents;
+  std::ifstream file{static_cast<std::string>(_args), std::ios::ate};
+
+  if (!file.is_open()) {
+    std::println("Couldn't open the execution file context.");
+    exit(1);
+  }
+
+  std::string file_text;
+  file_text.reserve(static_cast<size_t>(file.tellg()));
+  file.seekg(0, std::ios::beg);
+
+  file_text.assign((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  auto tokens = tokenize(file_text);
+
+  std::println("--- LEXER LOGS ---");
+  for (const auto &token : tokens) {
+    std::println("{:<20} = {:?}", token_return(token.type), token.value);
+  }
+
+  std::println("-------------");
+  std::println("Successfully parsed {} tokens", tokens.size());
+  return (0);
 }
