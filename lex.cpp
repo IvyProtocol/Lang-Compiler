@@ -207,211 +207,321 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
   [[maybe_unused]] size_t c_line = 1;
   [[maybe_unused]] size_t c_column = 1;
   size_t i = 0;
-  while ( i < Toks.length() ) {
+  while (i < Toks.length()) {
     char c = Toks[i];
 
-
     if (std::isspace(static_cast<u_char>(c))) {
-        if ( c == '\n') { c_line++; c_column = 1; }
-        else { c_column++; }
-        i++;
-        continue;
+      if (c == '\n') {
+        c_line++;
+        c_column = 1;
+      } else if (c == '\t')
+        c_column += 4;
+      else {
+        c_column++;
+      }
+      i++;
+      continue;
     }
 
-    size_t t_s_column = c_column;
+    [[maybe_unused]] size_t t_s_column = c_column;
 
     if (c == '&') {
-      Tokens.emplace_back(TokenType::AMPERSAND, Toks.substr(i, 1), c_line, c_column);
-      c_line++;
+      Tokens.emplace_back(TokenType::AMPERSAND, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
       c_column++;
       continue;
     }
 
     if (c == '.') {
       if (peek_match(Toks, i, '.') && peek_match(Toks, i + 1, '.')) {
-        Tokens.emplace_back(TokenType::RANGE, Toks.substr(i, 3));
-        i += 2;
-      } else
-        Tokens.emplace_back(TokenType::DOT, Toks.substr(i, 1));
+        if (i + 3 < Toks.length() && Toks[i + 3] == '.') {
+          std::println("Syntax Error: Quad-dot operator is unregistered. Line: "
+                       "{}, Column: {}",
+                       c_line, t_s_column);
+          exit(1);
+        }
+        Tokens.emplace_back(TokenType::RANGE, Toks.substr(i, 3), c_line,
+                            t_s_column);
+        i += 3;
+        c_column += 3;
+      } else {
+        Tokens.emplace_back(TokenType::DOT, Toks.substr(i, 1), c_line,
+                            t_s_column);
+        i++;
+        c_column++;
+      }
       continue;
     }
 
     if (c == '+') {
       if (peek_match(Toks, i, '+')) {
-        Tokens.emplace_back(TokenType::PLUS_PLUS, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::PLUS_PLUS, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::PLUS_EQUAL, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::PLUS_EQUAL, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::PLUS, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::PLUS, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == '-') {
       if (peek_match(Toks, i, '>')) {
-        Tokens.emplace_back(TokenType::ARROW, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::ARROW, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else if (peek_match(Toks, i, '-')) {
+        Tokens.emplace_back(TokenType::MINUS_MINUS, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else if (peek_match(Toks, i, '=')) {
+        Tokens.emplace_back(TokenType::MINUS_EQUAL, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::MINUS, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
+        c_column++;
       }
-
-      else if (peek_match(Toks, i, '-')) {
-        Tokens.emplace_back(TokenType::MINUS_MINUS, Toks.substr(i, 2));
-        i++;
-      }
-
-      else if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::MINUS_EQUAL, Toks.substr(i, 2));
-        i++;
-      }
-
-      else
-        Tokens.emplace_back(TokenType::MINUS, Toks.substr(i, 1));
       continue;
     }
 
     if (c == '*') {
       if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::MUL_EQUAL, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::MUL_EQUAL, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::MUL, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::MUL, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == '/') {
       if (peek_match(Toks, i, '/')) {
-        i++;
+        i += 2;
         while (i < Toks.length() && Toks[i] != '\n') {
           i++;
         }
       } else if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::DIV_EQUAL, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::DIV_EQUAL, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else if (peek_match(Toks, i, '*')) {
         i += 2;
         bool closed = false;
         while (i < Toks.length()) {
           if (Toks[i] == '*' && peek_match(Toks, i, '/')) {
-            i++;
+            i += 2;
             closed = true;
             break;
           }
+
+          if (Toks[i] == '\n') {
+            c_line++;
+            c_column = 1;
+          } else {
+            c_column++;
+          }
+
           i++;
         }
         if (!closed) {
           std::println("Did you forget to add '/' beside *?");
           exit(1);
         }
+      } else {
+        Tokens.emplace_back(TokenType::DIV, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::DIV, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == '<') {
       if (peek_match(Toks, i, '<')) {
-        Tokens.emplace_back(TokenType::L_S_O, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::L_S_O, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::LTE, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::LTE, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::LT, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
+        c_column++;
       }
-
-      else
-        Tokens.emplace_back(TokenType::LT, Toks.substr(i, 1));
       continue;
     }
 
     if (c == '>') {
       if (peek_match(Toks, i, '>')) {
-        Tokens.emplace_back(TokenType::R_S_O, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::R_S_O, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::GTE, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::GTE, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::GT, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::GT, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == '=') {
       if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::EQ, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::EQ, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else if (peek_match(Toks, i, '>')) {
-        Tokens.emplace_back(TokenType::MAP_ARROW, Toks.substr(i, 2));
-        i++;
+        Tokens.emplace_back(TokenType::MAP_ARROW, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
       } else {
-        std::println("ERR: Unexpected single '='");
+        std::println("ERR: Unexpected single '=' at line: {}, column: {}",
+                     c_line, t_s_column);
       }
       continue;
     }
 
     if (c == '!') {
       if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::NEQ, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::NEQ, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::BANG, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::BANG, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == ':') {
       if (peek_match(Toks, i, '=')) {
-        Tokens.emplace_back(TokenType::ASSIGN, Toks.substr(i, 2));
+        Tokens.emplace_back(TokenType::ASSIGN, Toks.substr(i, 2), c_line,
+                            t_s_column);
+        i += 2;
+        c_column += 2;
+      } else {
+        Tokens.emplace_back(TokenType::COLON, Toks.substr(i, 1), c_line,
+                            t_s_column);
         i++;
-      } else
-        Tokens.emplace_back(TokenType::COLON, Toks.substr(i, 1));
+        c_column++;
+      }
       continue;
     }
 
     if (c == '%') {
-      Tokens.emplace_back(TokenType::MOD, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::MOD, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == '?') {
-      Tokens.emplace_back(TokenType::QUESTION, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::QUESTION, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == ';') {
-      Tokens.emplace_back(TokenType::SEMI_COLON, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::SEMI_COLON, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == '(') {
-      Tokens.emplace_back(TokenType::L_PAREN, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::L_PAREN, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == ')') {
-      Tokens.emplace_back(TokenType::R_PAREN, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::R_PAREN, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == '{') {
-      Tokens.emplace_back(TokenType::LBRACE, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::LBRACE, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == '}') {
-      Tokens.emplace_back(TokenType::RBRACE, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::RBRACE, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == '[') {
-      Tokens.emplace_back(TokenType::LBRACKET, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::LBRACKET, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == ']') {
-      Tokens.emplace_back(TokenType::RBRACKET, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::RBRACKET, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
     if (c == ',') {
-      Tokens.emplace_back(TokenType::COMMA, Toks.substr(i, 1));
+      Tokens.emplace_back(TokenType::COMMA, Toks.substr(i, 1), c_line,
+                          t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
@@ -425,15 +535,25 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
           closed = true;
           break;
         }
+
+        if (Toks[i] == '\n') {
+          c_line++;
+          c_column = 1;
+        } else {
+          c_column++;
+        }
         i++;
       }
 
       if (!closed) {
-        std::println("ERR: Unclosed string literal!");
+        std::println("ERR: Unclosed string literal at line: {}, column: {}",
+                     c_line, t_s_column);
         exit(1);
       }
-      Tokens.emplace_back(
-          TokenType::STRING_LITERAL, Toks.substr(start, i - start));
+      Tokens.emplace_back(TokenType::STRING_LITERAL,
+                          Toks.substr(start, i - start), c_line, t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
@@ -447,6 +567,13 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
           closed = true;
           break;
         }
+
+        if (Toks[i] == '\n') {
+          c_line++;
+          c_column = 1;
+        } else {
+          c_column++;
+        }
         i++;
       }
 
@@ -455,8 +582,10 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
         exit(1);
       }
 
-      Tokens.emplace_back(
-          TokenType::RAW_STRING_LITERAL, Toks.substr(start, i - start));
+      Tokens.emplace_back(TokenType::RAW_STRING_LITERAL,
+                          Toks.substr(start, i - start), c_line, t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
@@ -470,16 +599,26 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
           closed = true;
           break;
         }
+
+        if (Toks[i] == '\n') {
+          c_line++;
+          c_column = 1;
+        } else {
+          c_column++;
+        }
         i++;
       }
 
       if (!closed) {
-        std::println("[ERR] Unclosed back-tick literal!");
+        std::println("[ERR] Unclosed back-tick literal at line: {}, column: {}",
+                     c_line, t_s_column);
         exit(1);
       }
 
-      Tokens.emplace_back(
-          TokenType::BACK_TICK_LITERAL, Toks.substr(start, i - start));
+      Tokens.emplace_back(TokenType::BACK_TICK_LITERAL,
+                          Toks.substr(start, i - start), c_line, t_s_column);
+      i++;
+      c_column++;
       continue;
     }
 
@@ -494,17 +633,16 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
           if (peek_match(Toks, i, '.'))
             break;
           is_float = true;
-        } else {
+        } else
           break;
-        }
         i++;
+        c_column++;
       }
       size_t length = i - start;
-      i--;
 
       TokenType type =
           is_float ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL;
-      Tokens.emplace_back(type, Toks.substr(start, length));
+      Tokens.emplace_back(type, Toks.substr(start, length), c_line, t_s_column);
 
       continue;
     }
@@ -515,24 +653,23 @@ inline std::vector<Token> tokenize(const std::string_view &Toks) {
       while (i < Toks.length()) {
         char current = Toks[i];
 
-        if (std::isalnum(static_cast<u_char>(current)) ||
-            current == '_') {
-        } else {
+        if (std::isalnum(static_cast<u_char>(current)) || current == '_') {
+        } else
           break;
-        }
         i++;
+        c_column++;
       }
       size_t length = i - start;
-      i--;
 
-      std::string_view word = Toks.substr(start, length);
-      TokenType type = identifier_or_keyword(word);
-      Tokens.emplace_back(type, word);
-    }
-
-    if (std::isspace(static_cast<u_char>(c))) {
+      Tokens.emplace_back(identifier_or_keyword(Toks.substr(start, length)),
+                          Toks.substr(start, length), c_line, t_s_column);
       continue;
     }
+
+    std::println("Syntax Error: Unknown token choice '{}' encountered at Line "
+                 "{}, Column {}",
+                 c, c_line, t_s_column);
+    exit(1);
   }
   return Tokens;
 }
@@ -713,7 +850,7 @@ inline std::string token_return(TokenType type) {
 }
 
 auto main(int argc, char *argv[]) -> std::int32_t {
-    // absolutely gorgeous
+  // absolutely gorgeous
   std::span<char const *const> _arguments{std::views::counted(argv, argc)};
 
   if (_arguments.size() < 2) {
@@ -741,7 +878,8 @@ auto main(int argc, char *argv[]) -> std::int32_t {
 
   std::println("--- LEXER LOGS ---");
   for (const auto &token : tokens) {
-    std::println("{:<20} = {:?}", token_return(token.type), token.value);
+    std::println("Line {:<3} | Col {:<3} | {:<20} = {:?}", token.line,
+                 token.column, token_return(token.type), token.value);
   }
 
   std::println("-------------");
