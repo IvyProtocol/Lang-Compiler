@@ -20,20 +20,20 @@ enum class Precedence : std::int64_t {
 
 struct ASTNode {
   virtual ~ASTNode();
-  virtual void debug_print() const = 0;
+  virtual void debug_print(const std::string &prefix = "") const = 0;
 };
 
 struct LiteralASTNode : public ASTNode {
   std::string value;
   LiteralASTNode(std::string_view val);
 
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct StubASTNode : public ASTNode {
   std::string name;
   explicit StubASTNode(std::string_view n);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct BinaryExprASTNode : public ASTNode {
@@ -43,14 +43,14 @@ struct BinaryExprASTNode : public ASTNode {
 
   BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token o,
                     std::unique_ptr<ASTNode> r);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct UnaryExprASTNode : public ASTNode {
   std::unique_ptr<ASTNode> operand;
   Token op;
   UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct TypeSpecifier {
@@ -68,13 +68,13 @@ struct VarDeclASTNode : public ASTNode {
 
   VarDeclASTNode(std::string_view id, TypeSpecifier t,
                  std::unique_ptr<ASTNode> init);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct VariableExprASTNode : public ASTNode {
   std::string name;
   VariableExprASTNode(std::string_view n);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct AssignmentASTNode : public ASTNode {
@@ -82,7 +82,7 @@ struct AssignmentASTNode : public ASTNode {
   std::unique_ptr<ASTNode> new_value;
 
   AssignmentASTNode(std::string_view name, std::unique_ptr<ASTNode> val);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct CallASTNode : public ASTNode {
@@ -91,13 +91,32 @@ struct CallASTNode : public ASTNode {
 
   CallASTNode(std::string_view name,
               std::vector<std::unique_ptr<ASTNode>> args);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct ArrayLiteralASTNode : public ASTNode {
   std::vector<std::unique_ptr<ASTNode>> elements;
   ArrayLiteralASTNode(std::vector<std::unique_ptr<ASTNode>> elements);
-  void debug_print() const override;
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct BlockASTNode : ASTNode {
+  std::vector<std::unique_ptr<ASTNode>> statements;
+
+  BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts);
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct IfASTNode : ASTNode {
+  std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
+      branches;
+  std::unique_ptr<ASTNode> else_branch;
+
+  IfASTNode(
+      std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
+          brs,
+      std::unique_ptr<ASTNode> el_br);
+  void debug_print(const std::string &prefix = "") const override;
 };
 
 struct Parser;
@@ -154,6 +173,7 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_expression(Precedence min_precedence);
   ParserRule get_rule(TokenType type);
   void expect_semicolon();
+  void synchronize();
 
   std::unique_ptr<ASTNode> parse_literal();
   std::unique_ptr<ASTNode> parse_identifier();
@@ -163,6 +183,10 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_grouping();
   std::unique_ptr<ASTNode> parse_call(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_index(std::unique_ptr<ASTNode> left);
+  std::unique_ptr<ASTNode> parse_block();
+  std::unique_ptr<ASTNode> parse_paren();
+  std::unique_ptr<ASTNode> parse_paren_expression();
+  std::unique_ptr<ASTNode> parse_if_statement();
   std::unique_ptr<ASTNode> parse_statement();
   std::unique_ptr<ASTNode> parse_primary();
 };
