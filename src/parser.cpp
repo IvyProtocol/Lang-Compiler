@@ -1,3 +1,447 @@
+#include "../include/Parser.hpp"
+#include <print>
+
+ASTNode::~ASTNode() = default;
+
+LiteralASTNode::LiteralASTNode(std::string_view val) : value(std::move(val)) {}
+
+StubASTNode::StubASTNode(std::string_view n) : name(n) {}
+
+VariableExprASTNode::VariableExprASTNode(std::string_view n) : name(n) {}
+
+VarDeclASTNode::VarDeclASTNode(std::string_view id, TypeSpecifier t,
+                               std::unique_ptr<ASTNode> init)
+    : identifier(id), type(t), initializer(std::move(init)) {}
+
+AssignmentASTNode::AssignmentASTNode(std::string_view name,
+                                     std::unique_ptr<ASTNode> val)
+    : variable_name(name), new_value(std::move(val)) {}
+
+CallASTNode::CallASTNode(std::string_view name,
+                         std::vector<std::unique_ptr<ASTNode>> args)
+    : call(name), arguments(std::move(args)) {}
+
+ArrayLiteralASTNode::ArrayLiteralASTNode(
+    std::vector<std::unique_ptr<ASTNode>> elems)
+    : elements(std::move(elems)) {}
+
+BinaryExprASTNode::BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token o,
+                                     std::unique_ptr<ASTNode> r)
+    : left(std::move(l)), op(o), right(std::move(r)) {}
+
+UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o)
+    : operand(std::move(opnd)), op(o) {}
+
+BlockASTNode::BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts)
+    : statements(std::move(stmts)) {}
+
+IfASTNode::IfASTNode(
+    std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
+        brs,
+    std::unique_ptr<ASTNode> el_br)
+    : branches(std::move(brs)), else_branch(std::move(el_br)) {}
+
+void LiteralASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Literal]: {}", value);
+}
+
+void StubASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Stub]: {}", name);
+}
+
+void VariableExprASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Variable]: {}", name);
+}
+
+// --- Declaration Nodes ---
+void VarDeclASTNode::debug_print(const std::string &prefix) const {
+  std::println("[VarDecl]: {}", identifier);
+  std::string next_prefix = prefix + "    ";
+
+  std::println("{}├── Type: {}{}", prefix, type.is_const ? "const " : "",
+               type.base_types);
+  if (type.is_array) {
+    std::println("{}├── Array-Size: {}", prefix, type.arr_size);
+  }
+
+  if (initializer) {
+    std::print("{}└── Initializer: ", prefix);
+    initializer->debug_print(next_prefix);
+  }
+}
+
+void AssignmentASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Assignment]: {}", variable_name);
+  if (new_value) {
+    std::print("{}└── Value: ", prefix);
+    new_value->debug_print(prefix + "    ");
+  }
+}
+
+void CallASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Call]: {}", call);
+  for (size_t i = 0; i < arguments.size(); ++i) {
+    bool is_last = (i == arguments.size() - 1);
+    std::print("{}{}", prefix, is_last ? "└── " : "├── ");
+    arguments[i]->debug_print(prefix + (is_last ? "    " : "│   "));
+  }
+}
+
+void ArrayLiteralASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Array]");
+  for (size_t i = 0; i < elements.size(); ++i) {
+    bool is_last = (i == elements.size() - 1);
+    std::print("{}{}", prefix, is_last ? "└── " : "├── ");
+    elements[i]->debug_print(prefix + (is_last ? "    " : "│   "));
+  }
+}
+
+void BinaryExprASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Binary]: {}", op.value);
+
+  std::print("{}├── ", prefix);
+  if (left)
+    left->debug_print(prefix + "│   ");
+  else
+    std::println("(null)");
+
+  std::print("{}└── ", prefix);
+  if (right)
+    right->debug_print(prefix + "    ");
+  else
+    std::println("(null)");
+}
+
+void UnaryExprASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Unary]: {}", op.value);
+  std::print("{}└── ", prefix);
+  if (operand)
+    operand->debug_print(prefix + "    ");
+  else
+    std::println("(null)");
+}
+
+void BlockASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Block]");
+  for (size_t i = 0; i < statements.size(); ++i) {
+    bool is_last = (i == statements.size() - 1);
+    std::print("{}{}", prefix, is_last ? "└── " : "├── ");
+    statements[i]->debug_print(prefix + (is_last ? "    " : "│   "));
+  }
+}
+
+void IfASTNode::debug_print(const std::string &prefix) const {
+  std::println("[If Statement]");
+  for (size_t i = 0; i < branches.size(); ++i) {
+    bool is_last_branch = (i == branches.size() - 1 && !else_branch);
+
+    std::println("{}{}Branch {}", prefix, is_last_branch ? "└── " : "├── ", i);
+
+    // Print Condition
+    std::print("{}    ├── Cond: ", prefix);
+    branches[i].first->debug_print(prefix + "    │   ");
+
+    // Print Body
+    std::print("{}    └── Body: ", prefix);
+    branches[i].second->debug_print(prefix + "        ");
+  }
+
+  if (else_branch) {
+    std::print("{}└── Else: ", prefix);
+    else_branch->debug_print(prefix + "    ");
+  }
+}
+
+void Parser::expect_semicolon() {
+  if (!check(TokenType::SEMI_COLON)) {
+    std::println("[ERR]: Expected ';' at Line {}, Column {}", peek().line,
+                 peek().column);
+  } else {
+    Token semi = advance();
+    std::println("[MOV]: Tracking ';' at Line {}, Column {}", semi.line,
+                 semi.column);
+  }
+}
+
+void Parser::synchronize() {
+  advance();
+
+  while (!is_at_end()) {
+    if (tokens[current - 1].type == TokenType::SEMI_COLON)
+      return;
+    switch (peek().type) {
+    case TokenType::IMPORT:
+    case TokenType::FUNCTION:
+    case TokenType::IF:
+    case TokenType::ELSEIF:
+    case TokenType::ELSE:
+    case TokenType::FOR:
+    case TokenType::WHILE:
+    case TokenType::LET:
+    case TokenType::RETURN:
+    case TokenType::BREAK:
+    case TokenType::CONTINUE:
+    case TokenType::MAIN:
+    case TokenType::SWITCH:
+    case TokenType::UNWRAP:
+    case TokenType::EXIT:
+    case TokenType::LENGTH:
+    case TokenType::JOIN:
+    case TokenType::EVAL:
+      return;
+
+    case TokenType::OR:
+    case TokenType::AND:
+    case TokenType::TRUE:
+    case TokenType::FALSE:
+    case TokenType::IN:
+    case TokenType::HASH:
+    case TokenType::AMPERSAND:
+    case TokenType::ARROW:
+    case TokenType::RANGE:
+    case TokenType::PLUS_PLUS:
+    case TokenType::MINUS_MINUS:
+    case TokenType::PLUS_EQUAL:
+    case TokenType::MINUS_EQUAL:
+    case TokenType::MUL_EQUAL:
+    case TokenType::DIV_EQUAL:
+    case TokenType::L_S_O:
+    case TokenType::R_S_O:
+    case TokenType::LTE:
+    case TokenType::GTE:
+    case TokenType::EQ:
+    case TokenType::NEQ:
+    case TokenType::MAP_ARROW:
+    case TokenType::DOUBLE_COLON:
+    case TokenType::ASSIGN:
+    case TokenType::PLUS:
+    case TokenType::MINUS:
+    case TokenType::MUL:
+    case TokenType::DIV:
+    case TokenType::MOD:
+    case TokenType::LT:
+    case TokenType::GT:
+    case TokenType::DOT:
+    case TokenType::BANG:
+    case TokenType::QUESTION:
+    case TokenType::COLON:
+    case TokenType::SEMI_COLON:
+    case TokenType::COMMA:
+    case TokenType::L_PAREN:
+    case TokenType::R_PAREN:
+    case TokenType::LBRACE:
+    case TokenType::RBRACE:
+    case TokenType::LBRACKET:
+    case TokenType::RBRACKET:
+    case TokenType::FLOAT_LITERAL:
+    case TokenType::INT_LITERAL:
+    case TokenType::STRING_LITERAL:
+    case TokenType::RAW_STRING_LITERAL:
+    case TokenType::BACK_TICK_LITERAL:
+    case TokenType::BOOL:
+    case TokenType::AUTO:
+    case TokenType::CONST:
+    case TokenType::VOID:
+    case TokenType::IDENTIFIER:
+    case TokenType::END_OF_FILE:
+      advance();
+      break;
+    }
+  }
+}
+Parser::Parser(std::vector<Token> tokens_list)
+    : tokens(std::move(tokens_list)) {}
+
+TypeSpecifier Parser::parse_type() {
+  TypeSpecifier type_info;
+
+  if (check(TokenType::CONST)) {
+    Token t = advance();
+    type_info.is_const = true;
+    std::println("[MOV]: Tracking 'CONST'. Line: {}, Column: {}", t.line,
+                 t.column);
+  }
+
+  if (check(TokenType::IDENTIFIER)) {
+    Token t = advance();
+    type_info.base_types = std::string(t.value);
+    std::println("[MOV]: Tracking '{}', Line: {}, Column: {}", t.value, t.line,
+                 t.column);
+  } else if (check(TokenType::AUTO) || check(TokenType::VOID)) {
+    Token t = advance();
+    type_info.base_types = std::string(t.value);
+    std::println("[MOV]: Tracking '{}', Line: {}, Column: {}", t.value, t.line,
+                 t.column);
+  } else {
+    std::println("[ERR]: Expected a type but got '{}' at Line {}, Column {}",
+                 peek().value, peek().line, peek().column);
+    type_info.base_types = "unknown";
+  }
+  return type_info;
+}
+
+std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
+  std::vector<std::unique_ptr<ASTNode>> program_nodes;
+
+  while (!is_at_end()) {
+    auto node = parse_statement();
+
+    if (node) {
+      program_nodes.emplace_back(std::move(node));
+    } else {
+      std::println("[ERR]: Syntax error detected at Line {}, Column {}",
+                   peek().line, peek().column);
+      synchronize();
+    }
+  }
+  return program_nodes;
+}
+
+std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
+  advance(); // Eat 'let'
+
+  TypeSpecifier var_type = parse_type();
+  if (check(TokenType::LBRACKET)) {
+    advance();
+    var_type.is_array = true; // Marking it as an array!
+
+    if (check(TokenType::INT_LITERAL)) {
+      Token size_token = advance();
+      var_type.arr_size = std::stoi(std::string(size_token.value));
+      std::println("[MOV]: Array-Declaration Size {} at Line {}, Column {}",
+                   size_token.value, size_token.line, size_token.column);
+    } else {
+      var_type.arr_size = -1;
+      std::println(
+          "[MOV]: Unsized Array-Declaration processed at Line {}, Column {}",
+          peek().line, peek().column);
+    }
+
+    if (check(TokenType::RBRACKET)) {
+      Token r_bracket = advance();
+      std::println(
+          "[MOV]: Array-Declaration ended with ']' at Line {}, Column {}",
+          r_bracket.line, r_bracket.line, r_bracket.value);
+    } else {
+      std::println("[ERR]: Expected ']' after Array-Declaration '[' at Line "
+                   "{}, Column {}",
+                   peek().line, peek().column);
+    }
+    std::println("[MOV]: Array-Variable has been initialized with an Type.");
+  }
+  if (check(TokenType::COLON)) {
+    advance();
+  } else {
+    std::println(
+        "[ERR]: Expected ':' after type-specifier at Line {}, Column {}",
+        peek().line, peek().column);
+    return nullptr;
+  }
+
+  if (!check(TokenType::IDENTIFIER)) {
+    std::println(
+        "[ERR]: Expected variable name after ':' at Line {}, Column {}",
+        peek().line, peek().column);
+    return nullptr;
+  }
+  Token token_name = advance();
+
+  std::unique_ptr<ASTNode> initializer_expr = nullptr;
+  if (check(TokenType::ASSIGN)) {
+    Token assign_tok = advance();
+    std::println("[MOV]: Tracking previous definer to assingment ':=' at "
+                 "Line {}, Column {}",
+                 assign_tok.line, assign_tok.column);
+    Token value_token = peek();
+    initializer_expr = parse_primary();
+    std::println("[MOV]: Assigner found body {} at Line {}, Column {}",
+                 value_token.value, value_token.line, value_token.column);
+  }
+
+  return std::make_unique<VarDeclASTNode>(token_name.value, var_type,
+                                          std::move(initializer_expr));
+}
+
+std::unique_ptr<ASTNode> Parser::parse_array_literal() {
+  Token arr = tokens[current - 1];
+  std::vector<std::unique_ptr<ASTNode>> elements;
+
+  if (!check(TokenType::END_OF_FILE) && !check(TokenType::RBRACKET)) {
+    do {
+      std::unique_ptr<ASTNode> arrays = parse_primary();
+
+      if (!arrays || dynamic_cast<StubASTNode *>(arrays.get()) != nullptr) {
+        std::println("[ERR]: Array context broken at Line {}, Column {}. "
+                     "Syncing out of bracket group.",
+                     arr.line, arr.column);
+        synchronize();
+        return std::make_unique<ArrayLiteralASTNode>(std::move(elements));
+      }
+      elements.emplace_back(std::move(arrays));
+
+      if (check(TokenType::COMMA))
+        advance();
+      else
+        break;
+
+    } while (!check(TokenType::END_OF_FILE) && !check(TokenType::RBRACKET));
+  }
+
+  if (check(TokenType::RBRACKET))
+    advance();
+  else
+    std::println(
+        "[ERR]: Expected closing ']' for array literal at Line {}, Column {}",
+        peek().line, peek().column);
+
+  return std::make_unique<ArrayLiteralASTNode>(std::move(elements));
+}
+
+std::unique_ptr<ASTNode> Parser::parse_expression(Precedence min_precedence) {
+  Token token = advance();
+  NudFunc nud_fn = get_rule(token.type).nud;
+
+  if (!nud_fn) {
+    return std::make_unique<StubASTNode>(
+        std::format("[ERR]: Parse-Error, expected start of a expression, got "
+                    "{} at Line {}, Column {}",
+                    token.value, token.line, token.column));
+  }
+
+  std::unique_ptr<ASTNode> left = (this->*nud_fn)();
+  while (!is_at_end() && min_precedence < get_rule(peek().type).precedence) {
+    Token next_token = advance();
+    LedFunc led_fn = get_rule(next_token.type).led;
+
+    if (led_fn)
+      left = (this->*led_fn)(std::move(left));
+  }
+  return left;
+}
+
+ParserRule Parser::get_rule(TokenType type) {
+  switch (type) {
+  case TokenType::INT_LITERAL:
+  case TokenType::FLOAT_LITERAL:
+  case TokenType::STRING_LITERAL:
+  case TokenType::RAW_STRING_LITERAL:
+  case TokenType::BACK_TICK_LITERAL:
+  case TokenType::TRUE:
+  case TokenType::FALSE:
+    return {Precedence::NONE, &Parser::parse_literal, nullptr};
+  case TokenType::IDENTIFIER:
+    return {Precedence::NONE, &Parser::parse_identifier, nullptr};
+  case TokenType::BANG:
+  case TokenType::PLUS_PLUS:
+  case TokenType::MINUS_MINUS:
+    return {Precedence::NONE, &Parser::parse_prefix, nullptr};
+
+  case TokenType::ASSIGN:
+  case TokenType::PLUS_EQUAL:
+  case TokenType::MINUS_EQUAL:
+  case TokenType::MUL_EQUAL:
+  case TokenType::DIV_EQUAL:
+    return {Precedence::ASSIGNMENT, nullptr, &Parser::parse_binary};
   case TokenType::OR:
     return {Precedence::LOGICAL_OR, nullptr, &Parser::parse_binary};
   case TokenType::AND:
