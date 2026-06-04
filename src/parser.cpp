@@ -41,15 +41,15 @@ IfASTNode::IfASTNode(
     std::unique_ptr<ASTNode> el_br)
     : branches(std::move(brs)), else_branch(std::move(el_br)) {}
 
-void LiteralASTNode::debug_print(const std::string &prefix) const {
+void LiteralASTNode::debug_print([[maybe_unused]]const std::string &prefix) const {
   std::println("[Literal]: {}", value);
 }
 
-void StubASTNode::debug_print(const std::string &prefix) const {
+void StubASTNode::debug_print([[maybe_unused]]const std::string &prefix) const {
   std::println("[Stub]: {}", name);
 }
 
-void VariableExprASTNode::debug_print(const std::string &prefix) const {
+void VariableExprASTNode::debug_print([[maybe_unused]]const std::string &prefix) const {
   std::println("[Variable]: {}", name);
 }
 
@@ -137,13 +137,13 @@ void IfASTNode::debug_print(const std::string &prefix) const {
 
     std::println("{}{}Branch {}", prefix, is_last_branch ? "└── " : "├── ", i);
 
-    // Print Condition
     std::print("{}    ├── Cond: ", prefix);
-    branches[i].first->debug_print(prefix + "    │   ");
+    if (branches[i].first) branches[i].first->debug_print(prefix + "    │   ");
+    else std::println("[Invalid Condition]");
 
-    // Print Body
     std::print("{}    └── Body: ", prefix);
-    branches[i].second->debug_print(prefix + "        ");
+    if (branches[i].second) branches[i].second->debug_print(prefix + "        ");
+    else std::println("[Invalid Body]");
   }
 
   if (else_branch) {
@@ -678,7 +678,7 @@ std::unique_ptr<ASTNode> Parser::parse_paren() {
     return nullptr;
   }
   advance();
-  return condition_node;
+  return { std::move(condition_node) };
 }
 
 std::unique_ptr<ASTNode> Parser::parse_paren_expression() {
@@ -687,10 +687,10 @@ std::unique_ptr<ASTNode> Parser::parse_paren_expression() {
   if (!check(TokenType::R_PAREN)) {
     std::println("[ERR]: Expected closing ')' at Line {}, Column {}",
                  peek().line, peek().column);
-    return nullptr;
+    return {nullptr};
   }
   advance();
-  return result;
+  return { std::move(result) };
 }
 
 std::unique_ptr<ASTNode> Parser::parse_if_statement() {
@@ -700,20 +700,42 @@ std::unique_ptr<ASTNode> Parser::parse_if_statement() {
   std::unique_ptr<ASTNode> else_branch = nullptr;
 
   auto if_cond = parse_paren();
+  if ( ! if_cond ) {
+    synchronize();
+    return nullptr;
+  }
   auto if_body = (check(TokenType::LBRACE)) ? parse_block() : parse_statement();
+  if ( ! if_body ) {
+    synchronize();
+    return nullptr;
+  }
+
   branches.emplace_back(std::move(if_cond), std::move(if_body));
 
   while (check(TokenType::ELSEIF)) {
     advance();
     auto elseif_cond = parse_paren();
+    if ( ! elseif_cond ) {
+        synchronize();
+        return nullptr;
+    }
     auto elseif_body =
         check(TokenType::LBRACE) ? parse_block() : parse_statement();
+    if ( ! elseif_body ) {
+        synchronize();
+        return nullptr;
+    }
     branches.emplace_back(std::move(elseif_cond), std::move(elseif_body));
   }
 
   if (check(TokenType::ELSE)) {
     advance();
     else_branch = check(TokenType::LBRACE) ? parse_block() : parse_statement();
+    if ( ! else_branch ) {
+        synchronize();
+        return nullptr;
+    }
+
   }
 
   return std::unique_ptr<ASTNode>(
