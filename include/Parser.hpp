@@ -1,6 +1,9 @@
-#include "Token.hpp"
-#include <memory>
-#include <string>
+#pragma once
+#ifndef PARSER_HPP
+#define PARSER_HPP
+
+#include "AST.hpp"
+#include <optional>
 #include <vector>
 
 enum class Precedence : std::int64_t {
@@ -17,113 +20,6 @@ enum class Precedence : std::int64_t {
   CALL_INDEX,   // function(), array[index]
   MEMBER_ACCESS // ., ::
 };
-
-struct ASTNode {
-  virtual ~ASTNode();
-  virtual void debug_print(const std::string &prefix = "") const = 0;
-};
-
-struct LiteralASTNode : public ASTNode {
-  std::string value;
-  LiteralASTNode(std::string_view val);
-
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct StubASTNode : public ASTNode {
-  std::string name;
-  explicit StubASTNode(std::string_view n);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct BinaryExprASTNode : public ASTNode {
-  std::unique_ptr<ASTNode> left;
-  Token op;
-  std::unique_ptr<ASTNode> right;
-
-  BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token o,
-                    std::unique_ptr<ASTNode> r);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct UnaryExprASTNode : public ASTNode {
-  std::unique_ptr<ASTNode> operand;
-  Token op;
-  UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct TypeSpecifier {
-  std::string base_types;
-  int arr_size{};
-  bool is_const{false};
-  bool is_array{false};
-  long : (8 * 2);
-};
-
-struct VarDeclASTNode : public ASTNode {
-  std::string identifier;
-  TypeSpecifier type;
-  std::unique_ptr<ASTNode> initializer;
-
-  VarDeclASTNode(std::string_view id, TypeSpecifier t,
-                 std::unique_ptr<ASTNode> init);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct VariableExprASTNode : public ASTNode {
-  std::string name;
-  VariableExprASTNode(std::string_view n);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct AssignmentASTNode : public ASTNode {
-  std::string variable_name;
-  std::unique_ptr<ASTNode> new_value;
-
-  AssignmentASTNode(std::string_view name, std::unique_ptr<ASTNode> val);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct CallASTNode : public ASTNode {
-  std::string call;
-  std::vector<std::unique_ptr<ASTNode>> arguments;
-
-  CallASTNode(std::string_view name,
-              std::vector<std::unique_ptr<ASTNode>> args);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct ArrayLiteralASTNode : public ASTNode {
-  std::vector<std::unique_ptr<ASTNode>> elements;
-  ArrayLiteralASTNode(std::vector<std::unique_ptr<ASTNode>> elements);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct BlockASTNode : ASTNode {
-  std::vector<std::unique_ptr<ASTNode>> statements;
-
-  BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct IfASTNode : ASTNode {
-  std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
-      branches;
-  std::unique_ptr<ASTNode> else_branch;
-
-  IfASTNode(
-      std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
-          brs,
-      std::unique_ptr<ASTNode> el_br);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct Parser;
-
-using NudFunc = std::unique_ptr<ASTNode> (Parser::*)();
-using LedFunc =
-    std::unique_ptr<ASTNode> (Parser::*)(std::unique_ptr<ASTNode> left);
 
 struct ParserRule {
   Precedence precedence;
@@ -166,14 +62,20 @@ struct Parser {
     return tokens[current + 1];
   }
 
+  std::optional<Token> consume_token(TokenType type, std::string_view msg);
+  bool consume(TokenType type, std::string_view msg);
+  bool parser_parameter_group(std::vector<ParameterASTNode> &params);
+  ParserRule get_rule(TokenType type);
+  void expect_semicolon();
+  void synchronize();
+  void recover();
+
   TypeSpecifier parse_type();
   std::vector<std::unique_ptr<ASTNode>> parse_program();
   std::unique_ptr<ASTNode> parse_variable_declaration();
   std::unique_ptr<ASTNode> parse_array_literal();
+  std::unique_ptr<ASTNode> parse_range_literal();
   std::unique_ptr<ASTNode> parse_expression(Precedence min_precedence);
-  ParserRule get_rule(TokenType type);
-  void expect_semicolon();
-  void synchronize();
 
   std::unique_ptr<ASTNode> parse_literal();
   std::unique_ptr<ASTNode> parse_identifier();
@@ -187,6 +89,9 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_paren();
   std::unique_ptr<ASTNode> parse_paren_expression();
   std::unique_ptr<ASTNode> parse_if_statement();
+  std::unique_ptr<ASTNode> parse_function_statement();
   std::unique_ptr<ASTNode> parse_statement();
   std::unique_ptr<ASTNode> parse_primary();
 };
+
+#endif
