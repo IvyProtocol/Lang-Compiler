@@ -4,29 +4,30 @@
 #include <cstdint>
 #include <string_view>
 enum class TokenType : std::int32_t {
-  IMPORT,             // import <>
-  FUNCTION,           // function name(type: Parmaeter) -> r_type: {}
-  IF,                 // if (condition) {}
-  ELSEIF,             // elseif (condition) {}
-  ELSE,               // else {}
-  FOR,                // for ( condition ) {}
-  WHILE,              // while ( condition ) {}
-  LET,                // let (x, y, z)
-  RETURN,             // return(x, y, z)
-  BREAK,              // break
-  CONTINUE,           // continue
-  OR,                 // or ||
-  AND,                // and &&
-  TRUE,               // true
-  FALSE,              // false
-  IN,                 // in
-  MAIN,               // function main(type: o_Param) -> int: {}
-  SWITCH,             // switch (variable or something) { (options) => do; }
-  UNWRAP,             // unwrap(variable)
-  EXIT,               // exit(i)
-  LENGTH,             // len()
-  JOIN,               // join()
-  EVAL,               // eval()
+  IMPORT,   // import <>
+  FUNCTION, // function name(type: Parmaeter) -> r_type: {}
+  IF,       // if (condition) {}
+  ELSEIF,   // elseif (condition) {}
+  ELSE,     // else {}
+  FOR,      // for ( condition ) {}
+  WHILE,    // while ( condition ) {}
+  LET,      // let (x, y, z)
+  RETURN,   // return(x, y, z)
+  BREAK,    // break
+  CONTINUE, // continue
+  OR,       // or ||
+  AND,      // and &&
+  TRUE,     // true
+  FALSE,    // false
+  IN,       // in
+  MAIN,     // function main(type: o_Param) -> int: {}
+  SWITCH,   // switch (variable or something) { (options) => do; }
+  UNWRAP,   // unwrap(variable)
+  EXIT,     // exit(i)
+  LENGTH,   // len()
+  JOIN,     // join()
+  EVAL,     // eval()
+  NAMESPACE,
   HASH,               // #
   AMPERSAND,          // &
   ARROW,              // ->
