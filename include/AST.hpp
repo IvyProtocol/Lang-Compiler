@@ -1,4 +1,3 @@
-#pragma once
 #ifndef AST_HPP
 #define AST_HPP
 
@@ -50,9 +49,11 @@ struct BinaryExprASTNode : public ASTNode {
 struct UnaryExprASTNode : public ASTNode {
   std::unique_ptr<ASTNode> operand;
   Token op;
-  UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o);
+  bool is_postfix;
+  UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o, bool postifx);
   MAKE_AST_NODE_UNCOPYABLE(UnaryExprASTNode)
   void debug_print(const std::string &prefix = "") const override;
+  char pad[7]{};
 };
 
 struct TypeSpecifier {
@@ -63,13 +64,37 @@ struct TypeSpecifier {
   long : (8 * 2);
 };
 
-struct VarDeclASTNode : public ASTNode {
-  std::string identifier;
-  TypeSpecifier type;
-  std::unique_ptr<ASTNode> initializer;
+struct RangeLiteralASTNode : public ASTNode {
+  std::unique_ptr<ASTNode> start; /* Could be a VariableASTNode or anything..
+                                     Phew I am safe! */
+  Token op;
+  std::unique_ptr<ASTNode> end;
+  MAKE_AST_NODE_UNCOPYABLE(RangeLiteralASTNode)
 
-  VarDeclASTNode(std::string_view id, TypeSpecifier t,
-                 std::unique_ptr<ASTNode> init);
+  RangeLiteralASTNode(std::unique_ptr<ASTNode> start_node, Token op_tok,
+                      std::unique_ptr<ASTNode> end_node);
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct ParameterASTNode : ASTNode {
+  std::unique_ptr<ASTNode> node;
+  TypeSpecifier type;
+  std::unique_ptr<ASTNode> defaultValue;
+  // Optional: No range!
+  std::unique_ptr<RangeLiteralASTNode> range;
+  ParameterASTNode(std::unique_ptr<ASTNode> n, TypeSpecifier t,
+                   std::unique_ptr<RangeLiteralASTNode> r = nullptr,
+                   std::unique_ptr<ASTNode> v = nullptr);
+
+  MAKE_AST_NODE_UNCOPYABLE(ParameterASTNode)
+
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct VarDeclASTNode : public ASTNode {
+  std::vector<ParameterASTNode> parameters;
+
+  VarDeclASTNode(std::vector<ParameterASTNode> params);
   MAKE_AST_NODE_UNCOPYABLE(VarDeclASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
@@ -107,18 +132,6 @@ struct ArrayLiteralASTNode : public ASTNode {
   void debug_print(const std::string &prefix = "") const override;
 };
 
-struct RangeLiteralASTNode : public ASTNode {
-  std::unique_ptr<ASTNode> start; /* Could be a VariableASTNode or anything..
-                                     Phew I am safe! */
-  Token op;
-  std::unique_ptr<ASTNode> end;
-  MAKE_AST_NODE_UNCOPYABLE(RangeLiteralASTNode)
-
-  RangeLiteralASTNode(std::unique_ptr<ASTNode> start_node, Token op_tok,
-                      std::unique_ptr<ASTNode> end_node);
-  void debug_print(const std::string &prefix = "") const override;
-};
-
 struct BlockASTNode : ASTNode {
   std::vector<std::unique_ptr<ASTNode>> statements;
 
@@ -137,20 +150,6 @@ struct IfASTNode : ASTNode {
           brs,
       std::unique_ptr<ASTNode> el_br);
   MAKE_AST_NODE_UNCOPYABLE(IfASTNode)
-  void debug_print(const std::string &prefix = "") const override;
-};
-
-struct ParameterASTNode : ASTNode {
-  std::unique_ptr<ASTNode> node;
-  TypeSpecifier type;
-
-  // Optional: No range!
-  std::unique_ptr<RangeLiteralASTNode> range;
-  ParameterASTNode(std::unique_ptr<ASTNode> n, TypeSpecifier t,
-                   std::unique_ptr<RangeLiteralASTNode> r = nullptr);
-
-  MAKE_AST_NODE_UNCOPYABLE(ParameterASTNode)
-
   void debug_print(const std::string &prefix = "") const override;
 };
 
