@@ -48,17 +48,33 @@ a := (((((((a - b) - c) - d) - e) - f) - g) - h) - i;
 b := a + b * c - d / e % f == g && h || i && j != k + l * m - n / o;
 c := foo(-a + b * c, bar(d == e && f || g), !!!h - i * (j + k / (l - m)));
 d := a<<b>>c + d&&e||f==g<=h>=i;
-
-if ( x == 1 ) x := 2;
-if ( x == 1 ): x := 2;
-
-if ( x == 1 ) {
-  x := 2;
-}
-
 function name(type: parmaeter) -> r_type: {}
 function name(void) -> r_type: {}
 
 function name(const auto&: x, int: y, str: z, ln ... 20, ln ...) -> int: {
 
+}
+
+if ( var == type() ): {
+  x := 1;
+}
+
+i++;
+++i;
+i--;
+--i;
+**i;
+
+let int: x, y;
+
+x := 1;
+
+function name(int: x := 1) -> int: {
+
+}
+
+if ( var > type() ) {
+  function name(int: x, int: y) -> int: {
+    ++i;
+  }
 }
