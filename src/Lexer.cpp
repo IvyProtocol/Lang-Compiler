@@ -1,9 +1,8 @@
-#include "../include/Token.hpp"
 #include "../include/Lexer.hpp"
+#include "../include/Token.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <print>
-#include <sys/types.h>
 #include <vector>
 
 using u_char = unsigned char;
@@ -71,9 +70,10 @@ TokenType identifier_or_keyword(const std::string_view &word) {
 
 std::vector<Token> tokenize(const std::string_view &Toks) {
   std::vector<Token> Tokens;
+  std::vector<size_t> indent_stack = {0};
 
-  [[maybe_unused]] size_t c_line = 1;
-  [[maybe_unused]] size_t c_column = 1;
+  size_t c_line = 1;
+  size_t c_column = 1;
   size_t i = 0;
   while (i < Toks.length()) {
     char c = Toks[i];
@@ -309,6 +309,7 @@ std::vector<Token> tokenize(const std::string_view &Toks) {
       } else {
         std::println("ERR: Unexpected single '=' at line: {}, column: {}",
                      c_line, t_s_column);
+        exit(1);
       }
       continue;
     }
