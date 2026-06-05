@@ -28,10 +28,12 @@ struct ParserRule {
 };
 
 struct Parser {
+
   std::vector<Token> tokens;
   size_t current{};
 
   Parser(std::vector<Token> tokens_list);
+  std::vector<std::unique_ptr<ASTNode>> parse_program();
 
   bool is_at_end() const {
     return current >= tokens.size() ||
@@ -65,13 +67,15 @@ struct Parser {
   std::optional<Token> consume_token(TokenType type, std::string_view msg);
   bool consume(TokenType type, std::string_view msg);
   bool parser_parameter_group(std::vector<ParameterASTNode> &params);
+  bool is_scope_terminated() const;
+  bool is_statement_start(TokenType type);
   ParserRule get_rule(TokenType type);
+  void update_scope_after_statement();
   void expect_semicolon();
   void synchronize();
   void recover();
 
   TypeSpecifier parse_type();
-  std::vector<std::unique_ptr<ASTNode>> parse_program();
   std::unique_ptr<ASTNode> parse_variable_declaration();
   std::unique_ptr<ASTNode> parse_array_literal();
   std::unique_ptr<ASTNode> parse_range_literal();
@@ -88,6 +92,7 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_block();
   std::unique_ptr<ASTNode> parse_paren();
   std::unique_ptr<ASTNode> parse_paren_expression();
+  std::unique_ptr<ASTNode> parse_if_body();
   std::unique_ptr<ASTNode> parse_if_statement();
   std::unique_ptr<ASTNode> parse_function_statement();
   std::unique_ptr<ASTNode> parse_statement();
