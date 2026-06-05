@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TOKEN_HPP
+#define TOKEN_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -86,3 +87,5 @@ struct Token {
   size_t line;
   size_t column;
 };
+
+#endif
