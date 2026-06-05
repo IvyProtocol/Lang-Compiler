@@ -51,11 +51,11 @@ ParameterASTNode::ParameterASTNode(std::unique_ptr<ASTNode> ne,
                                    std::unique_ptr<RangeLiteralASTNode> rl)
     : node(std::move(ne)), type(ty), range(std::move(rl)) {}
 
-FunctionASTNode::FunctionASTNode(std::string_view n,
-                                 std::vector<ParameterASTNode> p,
+FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> p,
                                  TypeSpecifier ret,
                                  std::unique_ptr<BlockASTNode> b)
-    : name(n), parameters(std::move(p)), return_type(ret), body(std::move(b)) {}
+    : name(std::move(n)), parameters(std::move(p)), return_type(ret),
+      body(std::move(b)) {}
 
 // ─── Internal logging helpers
 // ───────────────────────────────────────────────── Centralised here so every
