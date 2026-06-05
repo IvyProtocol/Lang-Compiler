@@ -1,0 +1,64 @@
+#import <Print::Println>
+
+let int: x := "hello";
+let str: ICantBelieveItHuhuhuhuIamSad := "123AtTheBestItIsworking!";
+let int[2]: y := [1, 2, 3];
+let int: z := getopt(hello, hi, welcome);
+x := a + b * c - d / e % f ! - x;
+
+a + b * c == d - e;
+
+a < b && c > d || e;
+
+foo(1 + 2, bar(3 * 4));
+
+foo(a + b * c, !(d == e), -f + g);
+
+a := a - b - c;
+b := a / b * c % d;
+c := -a * b;
+d := a == b == c;
+e := a * (b + c) * d;
+f := foo(a) + bar(b) * baz(c);
+g := foo(bar(a + b), baz(c * d));
+h := foo(a + bar(b * baz(c)));
+i := !!!!x;
+j := -!-!-x;
+k := foo(foo(foo(foo(x))));
+l := ((((a))));
+m := foo(a + (b * (c + (d * e))));
+
+std::Println("hello");
+
+izumi := 5 * ( 2 * 3 / ( 9 * 2 + ( 20 * 5 - ( 90 / 4 - ( 10 + 20 + ( 90 / 5 * ( 50 + 90 * ( 500 / 20 + ( 900 / 19 * ( 20 + 6 / ( 5 * 10 - ( 95 / 5 * ( 2 * 0 / 500 - 2 - 8 + 50 + 900 + ((890 * 90 / 50 - 40 + (900 - 50 * 20 + (590) + (0- (9) - (+40)) / 50 * 1) - 500) / 600) )))))))))))));
+n := - - a * + b;
+o := a + (b * (c + (d * (e + (f * g)))));
+p := a - a - a - a - a - a - a - a - a - a;
+q := !!!!-+-!-x;
+r := f(f(f(f(f(f(f(f(x))))))));
+s := -+-!a + !-+-b * -!-c;
+t := a + b * c == d / e - f && g || h && i == j * k + l;
+u := foo(-a + bar(!b, c * -d), -baz(e + -f * g));
+v := a - b + c - d + e - f + g - h;
+w := ((((((a - b) + c) - d) + e) - f) + g) - h;
+x := !!!a - !!b + !!!c * !!d;
+y := foo(bar(baz(a + b * c - d / e)), qux(x + y * z), -w + !v);
+z := a + (b + (c + (d + (e + (f + (g + (h + i)))))));
+a := (((((((a - b) - c) - d) - e) - f) - g) - h) - i;
+b := a + b * c - d / e % f == g && h || i && j != k + l * m - n / o;
+c := foo(-a + b * c, bar(d == e && f || g), !!!h - i * (j + k / (l - m)));
+d := a<<b>>c + d&&e||f==g<=h>=i;
+
+if ( x == 1 ) x := 2;
+if ( x == 1 ): x := 2;
+
+if ( x == 1 ) {
+  x := 2;
+}
+
+function name(type: parmaeter) -> r_type: {}
+function name(void) -> r_type: {}
+
+function name(const auto&: x, int: y, str: z, ln ... 20, ln ...) -> int: {
+
+}
