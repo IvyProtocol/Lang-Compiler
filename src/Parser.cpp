@@ -1,6 +1,6 @@
 #include "Parser.hpp"
-#include "Logger.hpp"
 #include "AST.hpp"
+#include "Logger.hpp"
 
 Parser::Parser(std::vector<Token> tokens_list)
     : tokens(std::move(tokens_list)) {}
@@ -109,6 +109,24 @@ bool Parser::is_statement_start(TokenType type) {
   return false;
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+bool Parser::is_mutating_operator(TokenType type) {
+  switch (type) {
+  case TokenType::ASSIGN:
+  case TokenType::PLUS_EQUAL:
+  case TokenType::MINUS_EQUAL:
+  case TokenType::MUL_EQUAL:
+  case TokenType::DIV_EQUAL:
+  case TokenType::PLUS_PLUS:
+  case TokenType::MINUS_MINUS:
+    return true;
+  default:
+    return false;
+  }
+}
+#pragma GCC diagnostic pop
+
 void Parser::expect_semicolon() {
   if (!check(TokenType::SEMI_COLON)) {
     log_err("Expected ';'", peek());
@@ -119,6 +137,7 @@ void Parser::expect_semicolon() {
 }
 
 void Parser::synchronize() {
+  advance();
   while (!is_at_end()) {
     if (tokens[current - 1].type == TokenType::SEMI_COLON)
       return;
@@ -143,16 +162,18 @@ ParserRule Parser::get_rule(TokenType type) {
     return {Precedence::NONE, &Parser::parse_identifier, nullptr};
 
   case TokenType::BANG:
+    return {Precedence::NONE, &Parser::parse_prefix, nullptr};
+
   case TokenType::PLUS_PLUS:
   case TokenType::MINUS_MINUS:
-    return {Precedence::NONE, &Parser::parse_prefix, nullptr};
+    return {Precedence::UNARY, &Parser::parse_prefix, &Parser::parse_postfix};
 
   case TokenType::ASSIGN:
   case TokenType::PLUS_EQUAL:
   case TokenType::MINUS_EQUAL:
   case TokenType::MUL_EQUAL:
   case TokenType::DIV_EQUAL:
-    return {Precedence::ASSIGNMENT, nullptr, &Parser::parse_binary};
+    return {Precedence::ASSIGNMENT, nullptr, &Parser::parse_assignment};
 
   case TokenType::OR:
     return {Precedence::LOGICAL_OR, nullptr, &Parser::parse_binary};
@@ -180,7 +201,7 @@ ParserRule Parser::get_rule(TokenType type) {
   case TokenType::MUL:
   case TokenType::DIV:
   case TokenType::MOD:
-    return {Precedence::FACTOR, nullptr, &Parser::parse_binary};
+    return {Precedence::FACTOR, &Parser::parse_prefix, &Parser::parse_binary};
 
   case TokenType::DOT:
   case TokenType::DOUBLE_COLON:
@@ -281,57 +302,26 @@ std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
   return program_nodes;
 }
 
+std::unique_ptr<ASTNode>
+Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
+  const Token op = tokens[current - 1];
+
+  std::unique_ptr<ASTNode> right = parse_expression(Precedence::NONE);
+  return std::make_unique<BinaryExprASTNode>(std::move(left), op,
+                                             std::move(right));
+}
+
 std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
-  advance(); // consume 'let'
+  advance();
+  std::vector<ParameterASTNode> all_vars;
+  while (!check(TokenType::SEMI_COLON) && !is_at_end()) {
+    if (!parser_variable_parameter_group(all_vars))
+      return nullptr;
 
-  TypeSpecifier var_type = parse_type();
-
-  if (check(TokenType::LBRACKET)) {
-    advance();
-    var_type.is_array = true;
-
-    if (check(TokenType::INT_LITERAL)) {
-      const Token size_tok =
-          *consume_token(TokenType::INT_LITERAL, "Expected array size");
-
-      var_type.arr_size = std::stoi(std::string(size_tok.value));
-      log_mov(std::format("Array-Declaration size {}", size_tok.value),
-              size_tok);
-    } else {
-      var_type.arr_size = -1;
-      log_mov("Unsized array-declaration", peek().line, peek().column);
-    }
-
-    const Token rb = peek();
-    if (consume(TokenType::RBRACKET,
-                "Expected ']' after array-declaration size")) {
-      log_mov("Array-Declaration closed ']'", rb);
-    }
-
-    log_mov("Array variable type resolved", peek().line, peek().column);
+    if (check(TokenType::COMMA))
+      advance();
   }
-
-  if (!consume(TokenType::COLON, "Expected ':' after type-specifier"))
-    return nullptr;
-
-  if (!check(TokenType::IDENTIFIER)) {
-    consume(TokenType::IDENTIFIER, "Expected variable name after ':'");
-    return nullptr;
-  }
-
-  const Token name_tok = advance();
-
-  std::unique_ptr<ASTNode> initializer = nullptr;
-  if (check(TokenType::ASSIGN)) {
-    const Token assign_tok = advance();
-    log_mov("Tracking assignment ':='", assign_tok);
-    const Token preview = peek();
-    initializer = parse_primary();
-    log_mov(std::format("Initializer value '{}'", preview.value), preview);
-  }
-
-  return std::make_unique<VarDeclASTNode>(name_tok.value, var_type,
-                                          std::move(initializer));
+  return std::make_unique<VarDeclASTNode>(std::move(all_vars));
 }
 
 std::unique_ptr<ASTNode> Parser::parse_array_literal() {
@@ -343,7 +333,6 @@ std::unique_ptr<ASTNode> Parser::parse_array_literal() {
     if (!elem || dynamic_cast<StubASTNode *>(elem.get())) {
       log_err("Array element parse failed; syncing out of bracket group",
               open_bracket);
-      synchronize();
       return std::make_unique<ArrayLiteralASTNode>(std::move(elements));
     }
     elements.emplace_back(std::move(elem));
@@ -409,9 +398,14 @@ std::unique_ptr<ASTNode> Parser::parse_identifier() {
 }
 
 std::unique_ptr<ASTNode> Parser::parse_prefix() {
-  const Token op = tokens[current - 1];
+  Token op = tokens[current - 1];
   std::unique_ptr<ASTNode> operand = parse_expression(Precedence::UNARY);
-  return std::make_unique<UnaryExprASTNode>(std::move(operand), op);
+  return std::make_unique<UnaryExprASTNode>(std::move(operand), op, false);
+}
+
+std::unique_ptr<ASTNode> Parser::parse_postfix(std::unique_ptr<ASTNode> left) {
+  return std::make_unique<UnaryExprASTNode>(std::move(left),
+                                            tokens[current - 1], true);
 }
 
 std::unique_ptr<ASTNode> Parser::parse_binary(std::unique_ptr<ASTNode> left) {
@@ -446,7 +440,6 @@ std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
     if (!arg || dynamic_cast<StubASTNode *>(arg.get())) {
       log_err("Call argument parse failed; syncing out of call frame",
               open_paren);
-      synchronize();
 
       std::string fn = "ambiguous";
       if (const VariableExprASTNode *v =
@@ -474,7 +467,8 @@ std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
   return std::make_unique<CallASTNode>(fn, std::move(args));
 }
 
-bool Parser::parser_parameter_group(std::vector<ParameterASTNode> &params) {
+bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
+                                  bool allow_ranges, TokenType term_type) {
   TypeSpecifier group_type = parse_type();
 
   if (!consume(TokenType::COLON, "Expected ':' after type in parameter group"))
@@ -486,32 +480,38 @@ bool Parser::parser_parameter_group(std::vector<ParameterASTNode> &params) {
     if (!param_name)
       return false;
 
+    std::unique_ptr<ASTNode> default_value = nullptr;
     std::unique_ptr<ASTNode> param_target =
         std::make_unique<VariableExprASTNode>(param_name->value);
-
     std::unique_ptr<RangeLiteralASTNode> param_range = nullptr;
-    if (check(TokenType::RANGE)) {
+
+    if (check(TokenType::ASSIGN)) {
+      advance();
+      default_value = parse_primary();
+    }
+
+    if (allow_ranges && check(TokenType::RANGE)) {
       Token op_tok = advance();
 
       std::unique_ptr<ASTNode> end_node = nullptr;
 
-      if (!check(TokenType::COMMA) && !check(TokenType::R_PAREN)) {
+      if (!check(TokenType::COMMA) && !check(term_type)) {
         end_node = parse_primary();
         if (!end_node || dynamic_cast<StubASTNode *>(end_node.get())) {
-          log_err("Expected expression after '...' in parameter range", peek());
+          log_err("Expected expression after '...' in parameter_range", peek());
           return false;
         }
       }
 
-      auto range_start =
+      std::unique_ptr<ASTNode> range_start =
           std::make_unique<VariableExprASTNode>(param_name->value);
 
       param_range = std::make_unique<RangeLiteralASTNode>(
           std::move(range_start), op_tok, std::move(end_node));
     }
-    params.emplace_back(std::move(param_target), group_type,
-                        std::move(param_range));
 
+    params.emplace_back(std::move(param_target), group_type,
+                        std::move(param_range), std::move(default_value));
     if (!check(TokenType::COMMA))
       break;
 
@@ -520,9 +520,19 @@ bool Parser::parser_parameter_group(std::vector<ParameterASTNode> &params) {
     if (current + 2 < tokens.size() &&
         tokens[current + 2].type == TokenType::COLON)
       break;
-    advance(); // Consume intra-group comma
+    advance();
   }
   return true;
+}
+
+bool Parser::parser_function_parameter_group(
+    std::vector<ParameterASTNode> &params) {
+  return parse_parameter_list(params, true, TokenType::R_PAREN);
+}
+
+bool Parser::parser_variable_parameter_group(
+    std::vector<ParameterASTNode> &params) {
+  return parse_parameter_list(params, false, TokenType::SEMI_COLON);
 }
 
 std::unique_ptr<ASTNode> Parser::parse_index(std::unique_ptr<ASTNode> left) {
@@ -672,7 +682,7 @@ std::unique_ptr<ASTNode> Parser::parse_function_statement() {
 
   else if (!check(TokenType::R_PAREN)) {
     while (!is_at_end()) {
-      if (!parser_parameter_group(params))
+      if (!parser_function_parameter_group(params))
         return nullptr;
       if (check(TokenType::COMMA)) {
         // Trailing comma: comma immediately followed by ')'.
@@ -704,8 +714,9 @@ std::unique_ptr<ASTNode> Parser::parse_function_statement() {
 
   std::unique_ptr<BlockASTNode> block_body = std::unique_ptr<BlockASTNode>(
       static_cast<BlockASTNode *>(body.release()));
-  return std::make_unique<FunctionASTNode>(std::string(name_tok.value), std::move(params),
-                                           ret, std::move(block_body));
+  return std::make_unique<FunctionASTNode>(std::string(name_tok.value),
+                                           std::move(params), ret,
+                                           std::move(block_body));
 }
 
 std::unique_ptr<ASTNode> Parser::parse_statement() {
@@ -757,15 +768,6 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
       parse_primary(); // parse and discard until semicolon is implemented
     expect_semicolon();
     return std::make_unique<StubASTNode>("Return ASTNode");
-  }
-
-  // simple assignment:  identifier = expr ;
-  if (check(TokenType::IDENTIFIER) && peek_next().type == TokenType::ASSIGN) {
-    const Token target = advance();
-    advance(); // consume '='
-    std::unique_ptr<ASTNode> val = parse_expression(Precedence::NONE);
-    expect_semicolon();
-    return std::make_unique<AssignmentASTNode>(target.value, std::move(val));
   }
 
   // expression statement
