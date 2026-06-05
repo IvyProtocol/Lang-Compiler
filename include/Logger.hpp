@@ -1,9 +1,8 @@
-#pragma once
+#ifndef LOGGER_HPP
+#define LOGGER_HPP
 #include "Token.hpp"
 #include <print>
 #include <string_view>
-#ifndef LOGGER_HPP
-#define LOGGER_HPP
 
 namespace {
 
