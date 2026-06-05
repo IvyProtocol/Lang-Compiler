@@ -9,9 +9,8 @@ StubASTNode::StubASTNode(std::string_view n) : name(n) {}
 
 VariableExprASTNode::VariableExprASTNode(std::string_view n) : name(n) {}
 
-VarDeclASTNode::VarDeclASTNode(std::string_view id, TypeSpecifier t,
-                               std::unique_ptr<ASTNode> init)
-    : identifier(id), type(t), initializer(std::move(init)) {}
+VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params)
+    : parameters(std::move(params)) {}
 
 AssignmentASTNode::AssignmentASTNode(std::string_view name,
                                      std::unique_ptr<ASTNode> val)
@@ -34,8 +33,9 @@ BinaryExprASTNode::BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token o,
                                      std::unique_ptr<ASTNode> r)
     : left(std::move(l)), op(o), right(std::move(r)) {}
 
-UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o)
-    : operand(std::move(opnd)), op(o) {}
+UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o,
+                                   bool postfix)
+    : operand(std::move(opnd)), op(o), is_postfix(postfix) {}
 
 BlockASTNode::BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts)
     : statements(std::move(stmts)) {}
@@ -48,8 +48,10 @@ IfASTNode::IfASTNode(
 
 ParameterASTNode::ParameterASTNode(std::unique_ptr<ASTNode> ne,
                                    TypeSpecifier ty,
-                                   std::unique_ptr<RangeLiteralASTNode> rl)
-    : node(std::move(ne)), type(ty), range(std::move(rl)) {}
+                                   std::unique_ptr<RangeLiteralASTNode> rl,
+                                   std::unique_ptr<ASTNode> vl)
+    : node(std::move(ne)), type(ty), defaultValue(std::move(vl)),
+      range(std::move(rl)) {}
 
 FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> p,
                                  TypeSpecifier ret,
@@ -79,17 +81,18 @@ void VariableExprASTNode::debug_print(
 }
 
 void VarDeclASTNode::debug_print(const std::string &prefix) const {
-  std::println("[VarDecl]: {}", identifier);
-  const std::string child = prefix + "    ";
+  std::println("[VarDecl]");
 
-  std::println("{}├── Type: {}{}", prefix, type.is_const ? "const " : "",
-               type.base_types);
-  if (type.is_array)
-    std::println("{}├── Array-Size: {}", prefix, type.arr_size);
+  for (size_t i{}; i < parameters.size(); ++i) {
+    bool is_last = (i == parameters.size() - 1);
 
-  if (initializer) {
-    std::print("{}└── Initializer: ", prefix);
-    initializer->debug_print(child);
+    std::string branch = is_last ? "└── " : "├── ";
+
+    std::print("{}{}", prefix, branch);
+
+    std::string next_prefix = prefix + (is_last ? "    " : "│   ");
+
+    parameters[i].debug_print(next_prefix);
   }
 }
 
@@ -112,7 +115,7 @@ void CallASTNode::debug_print(const std::string &prefix) const {
 
 void ArrayLiteralASTNode::debug_print(const std::string &prefix) const {
   std::println("[Array]");
-  for (size_t i = 0; i < elements.size(); ++i) {
+  for (size_t i{}; i < elements.size(); ++i) {
     const bool last = (i == elements.size() - 1);
     std::print("{}{}", prefix, last ? "└── " : "├── ");
     elements[i]->debug_print(prefix + (last ? "    " : "│   "));
@@ -132,22 +135,23 @@ void RangeLiteralASTNode::debug_print(const std::string &prefix) const {
 void BinaryExprASTNode::debug_print(const std::string &prefix) const {
   std::println("[Binary]: {}", op.value);
 
-  std::print("{}├── ", prefix);
-  left ? left->debug_print(prefix + "│   ") : std::println("(null)");
+  std::print("{}├── RHS (Source): ", prefix);
+  right ? right->debug_print(prefix + "│   ") : std::println("(null)");
 
-  std::print("{}└── ", prefix);
-  right ? right->debug_print(prefix + "    ") : std::println("(null)");
+  std::print("{}└── LHS (Target): ", prefix);
+  left ? left->debug_print(prefix + "    ") : std::println("(null)");
 }
 
 void UnaryExprASTNode::debug_print(const std::string &prefix) const {
-  std::println("[Unary]: {}", op.value);
-  std::print("{}└── ", prefix);
+  std::string kind = is_postfix ? "Postfix" : "Prefix";
+  std::println("[Unary]: {}", kind);
+  std::print("{}└── {}", prefix, op.value);
   operand ? operand->debug_print(prefix + "    ") : std::println("(null)");
 }
 
 void BlockASTNode::debug_print(const std::string &prefix) const {
   std::println("[Block]");
-  for (size_t i = 0; i < statements.size(); ++i) {
+  for (size_t i{}; i < statements.size(); ++i) {
     const bool last = (i == statements.size() - 1);
     std::print("{}{}", prefix, last ? "└── " : "├── ");
     statements[i]->debug_print(prefix + (last ? "    " : "│   "));
@@ -156,7 +160,7 @@ void BlockASTNode::debug_print(const std::string &prefix) const {
 
 void IfASTNode::debug_print(const std::string &prefix) const {
   std::println("[If Statement]");
-  for (size_t i = 0; i < branches.size(); ++i) {
+  for (size_t i{}; i < branches.size(); ++i) {
     const bool last_branch = (i == branches.size() - 1 && !else_branch);
     std::println("{}{}Branch {}", prefix, last_branch ? "└── " : "├── ", i);
 
@@ -186,11 +190,21 @@ void ParameterASTNode::debug_print(const std::string &prefix) const {
 
   std::println("{}├── Type: {}", prefix, type.base_types);
 
-  std::print("{}└── Range: ", prefix);
-  if (range)
-    range->debug_print(prefix + "    ");
-  else
+  bool has_range = (range != nullptr);
+  std::string default_branch = has_range ? "├──" : "└──";
+
+  std::print("{}{} Default: ", prefix, default_branch);
+  if (defaultValue) {
+    defaultValue->debug_print(prefix + (has_range ? "│   " : "    "));
+  } else {
     std::println("[none]");
+  }
+
+  if (has_range) {
+    std::print("{}└── Range: ", prefix);
+    // Important: Pass the prefix for the LAST item ("    ")
+    range->debug_print(prefix + "    ");
+  }
 }
 
 void FunctionASTNode::debug_print(const std::string &prefix) const {
