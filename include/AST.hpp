@@ -148,7 +148,9 @@ struct ParameterASTNode : ASTNode {
   std::unique_ptr<RangeLiteralASTNode> range;
   ParameterASTNode(std::unique_ptr<ASTNode> n, TypeSpecifier t,
                    std::unique_ptr<RangeLiteralASTNode> r = nullptr);
+
   MAKE_AST_NODE_UNCOPYABLE(ParameterASTNode)
+
   void debug_print(const std::string &prefix = "") const override;
 };
 
@@ -158,7 +160,7 @@ struct FunctionASTNode : public ASTNode {
   TypeSpecifier return_type;
   std::unique_ptr<BlockASTNode> body;
 
-  FunctionASTNode(std::string_view name, std::vector<ParameterASTNode> params,
+  FunctionASTNode(std::string name, std::vector<ParameterASTNode> params,
                   TypeSpecifier ret, std::unique_ptr<BlockASTNode> body);
   MAKE_AST_NODE_UNCOPYABLE(FunctionASTNode)
   void debug_print(const std::string &prefix = "") const override;
