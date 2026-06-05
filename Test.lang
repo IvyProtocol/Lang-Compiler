@@ -55,6 +55,11 @@ function name(const auto&: x, int: y, str: z, ln ... 20, ln ...) -> int: {
 
 }
 
+if ( var == type() ) {
+  x := 1;
+}
+if ( var == type() ): x := 1;
+
 if ( var == type() ): {
   x := 1;
 }
