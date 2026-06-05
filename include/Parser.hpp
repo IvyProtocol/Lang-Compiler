@@ -1,4 +1,3 @@
-#pragma once
 #ifndef PARSER_HPP
 #define PARSER_HPP
 
@@ -66,17 +65,20 @@ struct Parser {
 
   std::optional<Token> consume_token(TokenType type, std::string_view msg);
   bool consume(TokenType type, std::string_view msg);
-  bool parser_parameter_group(std::vector<ParameterASTNode> &params);
-  bool is_scope_terminated() const;
+  bool parse_parameter_list(std::vector<ParameterASTNode> &params,
+                            bool allow_ranges, TokenType term_type);
+  bool parser_function_parameter_group(std::vector<ParameterASTNode> &params);
+  bool parser_variable_parameter_group(std::vector<ParameterASTNode> &params);
   bool is_statement_start(TokenType type);
+  bool is_mutating_operator(TokenType type);
   ParserRule get_rule(TokenType type);
-  void update_scope_after_statement();
   void expect_semicolon();
   void synchronize();
   void recover();
 
   TypeSpecifier parse_type();
   std::unique_ptr<ASTNode> parse_variable_declaration();
+  std::unique_ptr<ASTNode> parse_assignment(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_array_literal();
   std::unique_ptr<ASTNode> parse_range_literal();
   std::unique_ptr<ASTNode> parse_expression(Precedence min_precedence);
@@ -84,6 +86,7 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_literal();
   std::unique_ptr<ASTNode> parse_identifier();
   std::unique_ptr<ASTNode> parse_prefix();
+  std::unique_ptr<ASTNode> parse_postfix(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_binary(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_memeber_access(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_grouping();
