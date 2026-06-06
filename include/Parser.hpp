@@ -27,7 +27,13 @@ struct ParserRule {
 };
 
 struct Parser {
+  struct ParameterOptsASTNode {
+    bool allow_assignment = false;
+    bool allow_ranges = false;
+    bool fatal_on_assign = false;
 
+    char pad[6]{};
+  };
   std::vector<Token> tokens;
   size_t current{};
 
@@ -66,11 +72,11 @@ struct Parser {
   std::optional<Token> consume_token(TokenType type, std::string_view msg);
   bool consume(TokenType type, std::string_view msg);
   bool parse_parameter_list(std::vector<ParameterASTNode> &params,
-                            bool allow_ranges, TokenType term_type);
+                            const ParameterOptsASTNode &opts,
+                            TokenType term_type);
   bool parser_function_parameter_group(std::vector<ParameterASTNode> &params);
   bool parser_variable_parameter_group(std::vector<ParameterASTNode> &params);
   bool is_statement_start(TokenType type);
-  bool is_mutating_operator(TokenType type);
   ParserRule get_rule(TokenType type);
   void expect_semicolon();
   void synchronize();
