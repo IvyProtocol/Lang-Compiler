@@ -109,24 +109,6 @@ bool Parser::is_statement_start(TokenType type) {
   return false;
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wswitch-enum"
-bool Parser::is_mutating_operator(TokenType type) {
-  switch (type) {
-  case TokenType::ASSIGN:
-  case TokenType::PLUS_EQUAL:
-  case TokenType::MINUS_EQUAL:
-  case TokenType::MUL_EQUAL:
-  case TokenType::DIV_EQUAL:
-  case TokenType::PLUS_PLUS:
-  case TokenType::MINUS_MINUS:
-    return true;
-  default:
-    return false;
-  }
-}
-#pragma GCC diagnostic pop
-
 void Parser::expect_semicolon() {
   if (!check(TokenType::SEMI_COLON)) {
     log_err("Expected ';'", peek());
@@ -313,15 +295,61 @@ Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
 
 std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
   advance();
-  std::vector<ParameterASTNode> all_vars;
-  while (!check(TokenType::SEMI_COLON) && !is_at_end()) {
-    if (!parser_variable_parameter_group(all_vars))
-      return nullptr;
 
-    if (check(TokenType::COMMA))
-      advance();
+  std::vector<ParameterASTNode> all_vars;
+  if (!parser_variable_parameter_group(all_vars))
+    return nullptr;
+  std::vector<std::unique_ptr<ASTNode>> initializers;
+
+  if (check(TokenType::ASSIGN)) {
+    advance(); // Consume ':='
+
+    while (!check(TokenType::SEMI_COLON) && !is_at_end()) {
+      std::unique_ptr<ASTNode> expr = parse_primary();
+      if (!expr) {
+        log_err("Expected expression in initializers list", peek());
+        return nullptr;
+      }
+      initializers.emplace_back(std::move(expr));
+
+      if (check(TokenType::COMMA)) {
+        if (!consume(TokenType::COMMA, "Expected ','"))
+          return nullptr;
+      } else {
+        break;
+      }
+    }
+
+    // Assignment cardinality rules
+    // Leave this alone.
+    // The backend will see multiple targets but only one
+    // source expression, signaling that it needs to perform a tuple unpack.
+    if (all_vars.size() > 1 && initializers.size() == 1) {
+    }
+
+    // x, y := a, b, c (Truncation)
+    // Slice off any excess expression that don't have matching variables.
+    else if (initializers.size() > all_vars.size()) {
+      initializers.resize(all_vars.size());
+    }
+
+    // x, y, z := a, b (Strict Mismatch Error)
+    // Provides multiple expression, but not enough to fill the variables.
+    // throw a compile-time failure.
+    else if (initializers.size() < all_vars.size()) {
+      log_err("Mismatch assignment count. Not enough expressions to map to "
+              "variables",
+              peek());
+      return nullptr;
+    }
   }
-  return std::make_unique<VarDeclASTNode>(std::move(all_vars));
+
+  if (!consume(TokenType::SEMI_COLON,
+               "Expected ';' at the end of variable declaration"))
+    return nullptr;
+
+  return std::make_unique<VarDeclASTNode>(std::move(all_vars),
+                                          std::move(initializers));
 }
 
 std::unique_ptr<ASTNode> Parser::parse_array_literal() {
@@ -468,7 +496,8 @@ std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
 }
 
 bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
-                                  bool allow_ranges, TokenType term_type) {
+                                  const ParameterOptsASTNode &opts,
+                                  TokenType term_type) {
   TypeSpecifier group_type = parse_type();
 
   if (!consume(TokenType::COLON, "Expected ':' after type in parameter group"))
@@ -485,12 +514,20 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
         std::make_unique<VariableExprASTNode>(param_name->value);
     std::unique_ptr<RangeLiteralASTNode> param_range = nullptr;
 
-    if (check(TokenType::ASSIGN)) {
+    if (check(TokenType::ASSIGN))
+      if (opts.fatal_on_assign) {
+        log_err(
+            "Default value via (':=') are strictly forbidden in this context",
+            peek());
+        return false;
+      }
+
+    if (opts.allow_assignment) {
       advance();
       default_value = parse_primary();
     }
 
-    if (allow_ranges && check(TokenType::RANGE)) {
+    if (opts.allow_ranges && check(TokenType::RANGE)) {
       Token op_tok = advance();
 
       std::unique_ptr<ASTNode> end_node = nullptr;
@@ -512,6 +549,13 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
 
     params.emplace_back(std::move(param_target), group_type,
                         std::move(param_range), std::move(default_value));
+
+    // Passive exit, if assignments are not parsed inline here. Stop collecting
+    // names immediately so VarDecl can handle the token downstream
+
+    if (!opts.allow_assignment && check(TokenType::ASSIGN))
+      break;
+
     if (!check(TokenType::COMMA))
       break;
 
@@ -520,19 +564,27 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
     if (current + 2 < tokens.size() &&
         tokens[current + 2].type == TokenType::COLON)
       break;
-    advance();
+    advance(); // Consume the COMMA
   }
   return true;
 }
 
 bool Parser::parser_function_parameter_group(
     std::vector<ParameterASTNode> &params) {
-  return parse_parameter_list(params, true, TokenType::R_PAREN);
+  ParameterOptsASTNode opts;
+  opts.allow_assignment = false;
+  opts.allow_ranges = true;
+  opts.fatal_on_assign = true;
+  return parse_parameter_list(params, opts, TokenType::R_PAREN);
 }
 
 bool Parser::parser_variable_parameter_group(
     std::vector<ParameterASTNode> &params) {
-  return parse_parameter_list(params, false, TokenType::SEMI_COLON);
+  ParameterOptsASTNode opts;
+  opts.allow_assignment = false;
+  opts.allow_ranges = false;
+  opts.fatal_on_assign = false;
+  return parse_parameter_list(params, opts, TokenType::SEMI_COLON);
 }
 
 std::unique_ptr<ASTNode> Parser::parse_index(std::unique_ptr<ASTNode> left) {
@@ -580,9 +632,7 @@ std::unique_ptr<ASTNode> Parser::parse_paren() {
     return nullptr;
   log_mov("Opening '('", op);
 
-  std::unique_ptr<ASTNode> node = check(TokenType::LET)
-                                      ? parse_variable_declaration()
-                                      : parse_expression(Precedence::NONE);
+  std::unique_ptr<ASTNode> node = parse_expression(Precedence::NONE);
   const Token cp = peek();
   if (!consume(TokenType::R_PAREN, "Expected closing ')'"))
     return nullptr;
@@ -614,7 +664,6 @@ std::unique_ptr<ASTNode> Parser::parse_if_body() {
   // or brace block on the next line.
   if (check(TokenType::COLON)) {
     advance();
-    // Author may write `if (cond): { ... }` — handle that gracefully.
     if (check(TokenType::LBRACE))
       return parse_block();
     return parse_statement();
