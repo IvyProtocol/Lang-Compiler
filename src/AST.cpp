@@ -9,8 +9,9 @@ StubASTNode::StubASTNode(std::string_view n) : name(n) {}
 
 VariableExprASTNode::VariableExprASTNode(std::string_view n) : name(n) {}
 
-VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params)
-    : parameters(std::move(params)) {}
+VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params,
+                               std::vector<std::unique_ptr<ASTNode>> i)
+    : parameters(std::move(params)), initializers(std::move(i)) {}
 
 AssignmentASTNode::AssignmentASTNode(std::string_view name,
                                      std::unique_ptr<ASTNode> val)
@@ -83,16 +84,58 @@ void VariableExprASTNode::debug_print(
 void VarDeclASTNode::debug_print(const std::string &prefix) const {
   std::println("[VarDecl]");
 
-  for (size_t i{}; i < parameters.size(); ++i) {
-    bool is_last = (i == parameters.size() - 1);
+  // Scenario 1: Clean Parallel Mapping (e.g., let int: x, y := 1, 2;)
+  if (parameters.size() == initializers.size()) {
+    size_t total_elements = parameters.size() * 2;
+    size_t current_element = 0;
 
-    std::string branch = is_last ? "└── " : "├── ";
+    for (size_t i = 0; i < parameters.size(); ++i) {
+      // A. Print Target Parameter
+      std::print("{}├── Target: ", prefix);
+      parameters[i].debug_print(prefix + "│   ");
+      current_element++;
 
-    std::print("{}{}", prefix, branch);
+      // B. Print Associated Value
+      bool val_is_last = (current_element == total_elements - 1);
+      std::string val_branch = val_is_last ? "└── Value:  " : "├── Value:  ";
+      std::print("{}{}", prefix, val_branch);
 
-    std::string next_prefix = prefix + (is_last ? "    " : "│   ");
+      std::string val_prefix = prefix + (val_is_last ? "    " : "│   ");
+      if (initializers[i]) {
+        initializers[i]->debug_print(val_prefix);
+      } else {
+        std::println("[Null Initializer]");
+      }
+      current_element++;
+    }
+  }
+  // Scenario 2: Tuple Unpacking or Cardinality Mismatch (e.g., let int: x, y :=
+  // get_pair();)
+  else {
+    size_t total_elements = parameters.size() + initializers.size();
+    size_t current_element = 0;
 
-    parameters[i].debug_print(next_prefix);
+    // Print all variable targets first
+    for (size_t i = 0; i < parameters.size(); ++i) {
+      std::print("{}├── Target: ", prefix);
+      parameters[i].debug_print(prefix + "│   ");
+      current_element++;
+    }
+
+    // Print the remaining initializer expression block (e.g., the tuple object)
+    for (size_t i = 0; i < initializers.size(); ++i) {
+      bool is_last = (current_element == total_elements - 1);
+      std::string branch = is_last ? "└── Source: " : "├── Source: ";
+      std::print("{}{}", prefix, branch);
+
+      std::string next_prefix = prefix + (is_last ? "    " : "│   ");
+      if (initializers[i]) {
+        initializers[i]->debug_print(next_prefix);
+      } else {
+        std::println("[Null Initializer]");
+      }
+      current_element++;
+    }
   }
 }
 
