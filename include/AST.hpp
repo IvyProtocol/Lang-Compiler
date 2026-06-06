@@ -76,7 +76,7 @@ struct RangeLiteralASTNode : public ASTNode {
   void debug_print(const std::string &prefix = "") const override;
 };
 
-struct ParameterASTNode : ASTNode {
+struct ParameterASTNode : public ASTNode {
   std::unique_ptr<ASTNode> node;
   TypeSpecifier type;
   std::unique_ptr<ASTNode> defaultValue;
@@ -93,8 +93,10 @@ struct ParameterASTNode : ASTNode {
 
 struct VarDeclASTNode : public ASTNode {
   std::vector<ParameterASTNode> parameters;
+  std::vector<std::unique_ptr<ASTNode>> initializers;
 
-  VarDeclASTNode(std::vector<ParameterASTNode> params);
+  VarDeclASTNode(std::vector<ParameterASTNode> params,
+                 std::vector<std::unique_ptr<ASTNode>> i);
   MAKE_AST_NODE_UNCOPYABLE(VarDeclASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
