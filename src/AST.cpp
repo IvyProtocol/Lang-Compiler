@@ -13,13 +13,17 @@ VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params,
                                std::vector<std::unique_ptr<ASTNode>> i)
     : parameters(std::move(params)), initializers(std::move(i)) {}
 
-AssignmentASTNode::AssignmentASTNode(std::string_view name,
+AssignmentASTNode::AssignmentASTNode(std::unique_ptr<ASTNode> lhs, Token op_tok,
                                      std::unique_ptr<ASTNode> val)
-    : variable_name(name), new_value(std::move(val)) {}
+    : left_side(std::move(lhs)), op(op_tok), new_value(std::move(val)) {}
 
 CallASTNode::CallASTNode(std::string_view name,
                          std::vector<std::unique_ptr<ASTNode>> args)
     : call(name), arguments(std::move(args)) {}
+
+IndexASTNode::IndexASTNode(std::unique_ptr<ASTNode> arr, Token op_tok,
+                           std::unique_ptr<ASTNode> idx)
+    : arr_expr(std::move(arr)), op(op_tok), iexpr(std::move(idx)) {}
 
 ArrayLiteralASTNode::ArrayLiteralASTNode(
     std::vector<std::unique_ptr<ASTNode>> elems)
@@ -41,6 +45,9 @@ UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o,
 BlockASTNode::BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts)
     : statements(std::move(stmts)) {}
 
+ImportASTNode::ImportASTNode(std::vector<std::string> path)
+    : mod_path(std::move(path)) {}
+
 IfASTNode::IfASTNode(
     std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
         brs,
@@ -60,11 +67,19 @@ FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> p,
     : name(std::move(n)), parameters(std::move(p)), return_type(ret),
       body(std::move(b)) {}
 
+MemberAccessASTNode::MemberAccessASTNode(std::unique_ptr<ASTNode> lhs,
+                                         Token op_tok, Token member_tok)
+    : left_side(std::move(lhs)), op(op_tok), member(member_tok) {}
+
 // ─── Internal logging helpers
 // ───────────────────────────────────────────────── Centralised here so every
 // format string is in one place; a mismatch in arguments causes a compile-time
 // error in exactly one spot rather than silently blowing up at runtime across
 // dozens of call-sites.
+
+bool TypeSpecifier::is_unknown() const {
+  return base_types == "unknown" || base_types.empty();
+}
 
 void LiteralASTNode::debug_print(
     [[maybe_unused]] const std::string &prefix) const {
@@ -140,9 +155,17 @@ void VarDeclASTNode::debug_print(const std::string &prefix) const {
 }
 
 void AssignmentASTNode::debug_print(const std::string &prefix) const {
-  std::println("[Assignment]: {}", variable_name);
+  std::println("[Assignment]");
+
+  if (left_side) {
+    std::print("{}├── Target: ", prefix);
+    // Pass a continuing pipe downward so nested parts of the target line up
+    left_side->debug_print(prefix + "│   ");
+  }
+
   if (new_value) {
     std::print("{}└── Value: ", prefix);
+    // Pass empty spaces downward because this is the last child of this node
     new_value->debug_print(prefix + "    ");
   }
 }
@@ -153,6 +176,20 @@ void CallASTNode::debug_print(const std::string &prefix) const {
     const bool last = (i == arguments.size() - 1);
     std::print("{}{}", prefix, last ? "└── " : "├── ");
     arguments[i]->debug_print(prefix + (last ? "    " : "│   "));
+  }
+}
+
+void IndexASTNode::debug_print(const std::string &prefix) const {
+  std::println("[IndexAccess] {}", op.value);
+
+  if (arr_expr) {
+    std::print("{}├── ", prefix);
+    arr_expr->debug_print(prefix + "│   ");
+  }
+
+  if (iexpr) {
+    std::print("{}└── ", prefix);
+    iexpr->debug_print(prefix + "    ");
   }
 }
 
@@ -199,6 +236,20 @@ void BlockASTNode::debug_print(const std::string &prefix) const {
     std::print("{}{}", prefix, last ? "└── " : "├── ");
     statements[i]->debug_print(prefix + (last ? "    " : "│   "));
   }
+}
+
+void ImportASTNode::debug_print(const std::string &prefix) const {
+  // We prepend the prefix to ensure this line aligns perfectly
+  // with the parent's indentation structure.
+  std::print("{}Import: ", prefix);
+
+  for (size_t i = 0; i < mod_path.size(); ++i) {
+    std::print("{}", mod_path[i]);
+    if (i < mod_path.size() - 1) {
+      std::print("::");
+    }
+  }
+  std::println(""); // Final newline for the line
 }
 
 void IfASTNode::debug_print(const std::string &prefix) const {
@@ -265,4 +316,15 @@ void FunctionASTNode::debug_print(const std::string &prefix) const {
   } else {
     std::print("[Invalid Body]");
   }
+}
+
+void MemberAccessASTNode::debug_print(const std::string &prefix) const {
+  std::println("[MemberAccess] ({})", op.value);
+
+  if (left_side) {
+    std::print("{}├── ", prefix);
+    left_side->debug_print(prefix + "│   ");
+  }
+
+  std::println("{}└── [Identifier]: {}", prefix, member.value);
 }
