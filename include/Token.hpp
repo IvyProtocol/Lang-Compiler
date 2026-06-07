@@ -72,7 +72,6 @@ enum class TokenType : std::int32_t {
   STRING_LITERAL,     // "hello"
   RAW_STRING_LITERAL, // 'hello'
   BACK_TICK_LITERAL,  // '`'
-  BOOL,               // bool
   AUTO,               // auto
   CONST,              // const
   VOID,               // void
