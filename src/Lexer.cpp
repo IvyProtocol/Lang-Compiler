@@ -57,8 +57,6 @@ TokenType identifier_or_keyword(const std::string_view &word) {
     return TokenType::EVAL;
   if (word == "namespace")
     return TokenType::NAMESPACE;
-  if (word == "bool")
-    return TokenType::BOOL;
   if (word == "auto")
     return TokenType::AUTO;
   if (word == "const")
@@ -576,7 +574,7 @@ std::vector<Token> tokenize(const std::string_view &Toks) {
     exit(1);
   }
 
-  Tokens.emplace_back(TokenType::END_OF_FILE, "", c_line, c_column);
+  Tokens.emplace_back(TokenType::END_OF_FILE, "", c_line, c_column + 1);
   return Tokens;
 }
 
@@ -716,8 +714,6 @@ std::string token_return(TokenType type) {
     return "RAW_STRING_LITERAL";
   case TokenType::BACK_TICK_LITERAL:
     return "BACK_TICK_LITERAL";
-  case TokenType::BOOL:
-    return "BOOL";
   case TokenType::AUTO:
     return "AUTO";
   case TokenType::CONST:
