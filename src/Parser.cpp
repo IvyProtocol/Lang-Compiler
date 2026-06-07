@@ -1,13 +1,14 @@
 #include "Parser.hpp"
 #include "AST.hpp"
 #include "Logger.hpp"
+#include <tuple>
 
 Parser::Parser(std::vector<Token> tokens_list, std::string_view file_path,
                std::vector<std::string> lines)
     : tokens(std::move(tokens_list)), filename(file_path),
       source_lines(std::move(lines)) {}
 
-const Token& Parser::peek() const {
+const Token &Parser::peek() const {
   if (is_at_end()) {
     static const Token eof_token{TokenType::END_OF_FILE, "EOF", 0, 0};
     return eof_token;
@@ -15,14 +16,14 @@ const Token& Parser::peek() const {
   return tokens[current];
 }
 
-std::optional<Token> Parser::consume_token(TokenType type,
-                                           std::string_view msg) {
+std::expected<Token, ParseError> Parser::consume_token(TokenType type,
+                                                       std::string_view msg) {
   if (check(type))
     return advance();
 
   const std::string_view token_val = is_at_end() ? "EOF" : peek().value;
   report_error(peek(), std::format("{} but got '{}' ", msg, token_val));
-  return std::nullopt;
+  return std::unexpected(ParseError::UnexpectedToken);
 }
 
 // For when I need to verify a symbol ( e.g.. '(', '->') Yeah, no. I can't type.
@@ -185,10 +186,17 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
                           param_name->value));
           // Minor local step-over to prevent cascading errors across parameters
           advance();
-          parse_expression(Precedence::NONE);
+
+          std::ignore = parse_expression(Precedence::NONE);
+
         } else if (opts.allow_assignment) {
           advance();
-          default_value = parse_expression(Precedence::NONE);
+
+          auto default_value_res = parse_expression(Precedence::NONE);
+          if (!default_value_res.has_value())
+            return false;
+
+          default_value = std::move(default_value_res.value());
         }
       }
 
@@ -197,9 +205,9 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
         std::unique_ptr<ASTNode> end_node = nullptr;
 
         if (!check(TokenType::COMMA) && !check(term_type)) {
-          end_node = parse_expression(Precedence::NONE);
+          auto end_node_res = parse_expression(Precedence::NONE);
 
-          if (!end_node || dynamic_cast<StubASTNode *>(end_node.get())) {
+          if (!end_node_res.has_value()) {
             report_error(
                 peek(),
                 std::format("Range expression error: Expected a valid bounding "
@@ -209,6 +217,8 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
                             param_name->value, peek().value));
             return false;
           }
+
+          end_node = std::move(end_node_res.value());
         }
 
         std::unique_ptr<ASTNode> range_start =
@@ -230,12 +240,6 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
       if (!check(TokenType::COMMA))
         break; // No comma means we are done with this parameter group entirely.
 
-      // --- DYNAMIC LOOKAHEAD ---
-      // We are at a COMMA. We need to know if the next items belong to THIS
-      // type group (e.g. `, y`), or if a NEW type group is starting (e.g. `,
-      // str: y`). Your old `current + 2` logic breaks if a type has multiple
-      // tokens (like `const int:`). This scan safely looks ahead for a colon
-      // without consuming tokens.
       bool next_is_new_type_group = false;
       size_t scan_idx = current; // 'current' is looking right at the COMMA
       scan_idx++;                // Skip the comma itself
@@ -296,8 +300,11 @@ void Parser::synchronize() {
 }
 
 void Parser::report_error(const Token &tok, std::string_view msg) {
-  std::println("\033[1m{}:{}:{}: \033[31merror:\033[0m \033[1m{}\033[0m",
-               filename, tok.line, tok.column, msg);
+  // Reset sequence at the end of the first println
+  std::println("\033[1m{}:{}:{}:\033[0m {}{}: {}{}\033[0m", filename, tok.line,
+               tok.column, ConsoleColor::BOLD_RED, "error", ConsoleColor::RESET,
+               msg);
+
   if (tok.line == 0 || tok.line > source_lines.size())
     return;
 
@@ -309,7 +316,9 @@ void Parser::report_error(const Token &tok, std::string_view msg) {
   if (tok.value.length() > 1)
     underline += std::string(tok.value.length() - 1, '~');
 
-  std::println("      | {}{}", padding, underline); // 6 spaces + "| " = 8 chars
+  // Explicitly reset after the underline
+  std::println("      | {}{}{}{}", padding, ConsoleColor::BOLD_RED, underline,
+               ConsoleColor::RESET);
 }
 
 ParserRule Parser::get_rule(TokenType type) {
@@ -515,9 +524,9 @@ std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
   std::vector<std::unique_ptr<ASTNode>> program_nodes;
 
   while (!is_at_end()) {
-     std::unique_ptr<ASTNode> node = parse_statement();
+    auto node = parse_statement();
     if (node) {
-      program_nodes.emplace_back(std::move(node));
+      program_nodes.emplace_back(std::move(node.value()));
     } else {
       synchronize();
     }
@@ -526,7 +535,7 @@ std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
   return program_nodes;
 }
 
-std::unique_ptr<ASTNode>
+std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
   const Token op = tokens[current - 1];
 
@@ -537,28 +546,28 @@ Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
       !dynamic_cast<IndexASTNode *>(left.get()) &&
       !dynamic_cast<MemberAccessASTNode *>(left.get())) {
     report_error(op, "Invalid left-hand side target in assignment expression");
-    return nullptr;
+    return std::unexpected(ParseError::InvalidAssignmentTarget);
   }
 
   Precedence right_precedence = static_cast<Precedence>(
       static_cast<std::int64_t>(Precedence::ASSIGNMENT) - 1);
 
-  std::unique_ptr<ASTNode> right = parse_expression(right_precedence);
-  if (!right)
-    return nullptr;
+  auto right_res = parse_expression(right_precedence);
+  if (!right_res)
+    return std::unexpected(right_res.error());
 
   return std::make_unique<AssignmentASTNode>(std::move(left), op,
-                                             std::move(right));
+                                             std::move(*right_res));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_variable_declaration() {
   const Token let_token = advance();
 
   std::vector<ParameterASTNode> all_vars;
   if (!parser_variable_parameter_group(all_vars)) {
     synchronize();
-    return std::make_unique<StubASTNode>(
-        "Malformed variable declaration targets");
+    return std::unexpected(ParseError::InvalidDeclarationTarget);
   }
 
   std::vector<std::unique_ptr<ASTNode>> initializers;
@@ -567,9 +576,9 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
     advance(); // Consume ':='
 
     while (!check(TokenType::SEMI_COLON) && !is_at_end()) {
-      std::unique_ptr<ASTNode> expr = parse_expression(Precedence::NONE);
+      auto expr_res = parse_expression(Precedence::NONE);
 
-      if (!expr || dynamic_cast<StubASTNode *>(expr.get())) {
+      if (!expr_res) {
         report_error(peek(), "Expected valid expression in initializers list");
 
         while (!is_at_end() && !check(TokenType::COMMA) &&
@@ -583,7 +592,7 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
         break;
       }
 
-      initializers.emplace_back(std::move(expr));
+      initializers.emplace_back(std::move(expr_res.value()));
 
       if (check(TokenType::COMMA)) {
         advance();
@@ -608,7 +617,23 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
     // x, y := a, b, c (Truncation)
     // Slice off any excess expression that don't have matching variables.
     else if (initializers.size() > all_vars.size()) {
-      initializers.resize(all_vars.size());
+      size_t excess_count = initializers.size() - all_vars.size();
+
+      report_error(
+          peek(),
+          std::format("Assignment count mismatch: Expected {} expressions to "
+                      "fully map to the declared variables, but found {} "
+                      "excess expression(s). "
+                      "Remove the extra {} intiialization value(s)",
+                      all_vars.size(), excess_count, excess_count));
+
+      report_error(let_token, "In the variable declaration starting here");
+      synchronize();
+
+      if (check(TokenType::SEMI_COLON))
+        advance();
+
+      return std::unexpected(ParseError::AssignmentCountMismatch);
     }
 
     // x, y, z := a, b (Strict Mismatch Error)
@@ -630,8 +655,7 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
       if (check(TokenType::SEMI_COLON))
         advance();
 
-      return std::make_unique<StubASTNode>(
-          "Malformed Variable Declaration (Count Mismatch)");
+      return std::unexpected(ParseError::AssignmentCountMismatch);
     }
   }
 
@@ -640,8 +664,7 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
     report_error(let_token, "To complete this variable declaration");
 
     synchronize();
-    return std::make_unique<StubASTNode>(
-        "Missing semicolon in variable declaration");
+    return std::unexpected(ParseError::MissingSemiColon);
   }
   advance(); // Safely consume ';'
 
@@ -649,14 +672,15 @@ std::unique_ptr<ASTNode> Parser::parse_variable_declaration() {
                                           std::move(initializers));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_array_literal() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_array_literal() {
   const Token open_bracket = tokens[current - 1]; // Points to '['
   std::vector<std::unique_ptr<ASTNode>> elements;
 
   while (!is_at_end() && !check(TokenType::RBRACKET)) {
-    std::unique_ptr<ASTNode> elem = parse_expression(Precedence::NONE);
+    auto elem_res = parse_expression(Precedence::NONE);
 
-    if (!elem || dynamic_cast<StubASTNode *>(elem.get())) {
+    if (!elem_res) {
       report_error(peek(),
                    "Array element parse failed; syncing out of bracket group");
 
@@ -671,7 +695,7 @@ std::unique_ptr<ASTNode> Parser::parse_array_literal() {
       break;
     }
 
-    elements.emplace_back(std::move(elem));
+    elements.emplace_back(std::move(elem_res.value()));
     if (!check(TokenType::COMMA))
       break;
     advance(); // Safely consume the comma
@@ -681,117 +705,127 @@ std::unique_ptr<ASTNode> Parser::parse_array_literal() {
     report_error(peek(), "Expected ']' to close this array literal");
     report_error(open_bracket, "To match this opening square bracket");
     synchronize();
-    return std::make_unique<StubASTNode>("Malformed array literal");
+    return std::unexpected(ParseError::InvalidArrayMalformed);
   }
   advance(); // Safely consume the validated ']'
   return std::make_unique<ArrayLiteralASTNode>(std::move(elements));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_range_literal() {
-  std::unique_ptr<ASTNode> left = parse_primary();
-  if (!left)
-    return nullptr;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_range_literal() {
+  auto left_res = parse_primary();
+
+  if (!left_res.has_value())
+    return std::unexpected(left_res.error());
+
+  std::unique_ptr<ASTNode> left_node = std::move(left_res.value());
   if (!check(TokenType::RANGE))
-    return left;
+    return left_node;
 
   const Token op_tok = advance();
 
-  std::unique_ptr<ASTNode> right = nullptr;
+  std::unique_ptr<ASTNode> right_node = nullptr;
 
   if (check(TokenType::R_PAREN) || check(TokenType::COMMA)) {
   }
 
-  else if (check(TokenType::INT_LITERAL))
-    right = parse_primary();
+  else if (check(TokenType::INT_LITERAL)) {
+    auto right_res = parse_primary();
+    if (!right_res.has_value())
+      return std::unexpected(right_res.error());
 
-  else {
+    right_node = std::move(right_res.value());
+  } else {
     report_error(peek(),
-                 std::format("Syntax Error: Range operator '...' followed by "
+                 std::format("Range operator '...' followed by "
                              "invalid token '{}' ."
                              "Expected an integer literal for a bounded range, "
                              "or nothing for an infinite range.",
                              peek().value));
-    return nullptr;
+    return std::unexpected(ParseError::MalformedRangeLiteral);
   }
 
-  return std::make_unique<RangeLiteralASTNode>(std::move(left), op_tok,
-                                               std::move(right));
-#pragma GCC diagnostic pop
+  return std::make_unique<RangeLiteralASTNode>(std::move(left_node), op_tok,
+                                               std::move(right_node));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_expression(Precedence min_prec) {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_expression(Precedence min_prec) {
   const Token token = advance();
-  const NudFunc nud = get_rule(token.type).nud;
+  const ParserRule rule = get_rule(token.type);
 
-  if (!nud) {
+  if (peek().type == TokenType::END_OF_FILE)
+    return std::unexpected(ParseError::UnexpectedToken);
+
+  if (!rule.nud) {
     report_error(token,
                  std::format("Expected start of an expression, but got '{}'",
                              token.value));
-    return std::make_unique<StubASTNode>("Malformed Expression Prefix");
+    return std::unexpected(ParseError::InvalidExpression);
   }
 
-  std::unique_ptr<ASTNode> left = (this->*nud)();
+  auto left_res = (this->*rule.nud)();
 
-  if (!left || dynamic_cast<StubASTNode *>(left.get()))
-    return left;
+  if (!left_res)
+    return std::unexpected(left_res.error());
+
+  std::unique_ptr<ASTNode> left = std::move(left_res.value());
 
   while (!is_at_end() && min_prec < get_rule(peek().type).precedence) {
     const Token next = advance();
     const LedFunc led = get_rule(next.type).led;
     if (led) {
-      left = (this->*led)(std::move(left));
+      auto led_res = (this->*led)(std::move(left));
+      if (!led_res.has_value())
+        return std::unexpected(led_res.error());
 
-      if (!left || dynamic_cast<StubASTNode *>(left.get()))
-        return left;
+      left = std::move(led_res.value());
     }
   }
   return left;
 }
 
-std::unique_ptr<ASTNode> Parser::parse_literal() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_literal() {
   return std::make_unique<LiteralASTNode>(tokens[current - 1].value);
 }
 
-std::unique_ptr<ASTNode> Parser::parse_identifier() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_identifier() {
   return std::make_unique<VariableExprASTNode>(tokens[current - 1].value);
 }
 
-std::unique_ptr<ASTNode> Parser::parse_prefix() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_prefix() {
   Token op = tokens[current - 1];
-  std::unique_ptr<ASTNode> operand = parse_expression(Precedence::UNARY);
+  auto operand_res = parse_expression(Precedence::UNARY);
 
-  if (!operand || dynamic_cast<StubASTNode *>(operand.get()))
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-    return operand;
-#pragma GCC diagnostic pop
-  return std::make_unique<UnaryExprASTNode>(std::move(operand), op, false);
+  if (!operand_res.has_value())
+    return std::unexpected(operand_res.error());
+
+  return std::make_unique<UnaryExprASTNode>(std::move(operand_res.value()), op,
+                                            false);
 }
 
-std::unique_ptr<ASTNode> Parser::parse_postfix(std::unique_ptr<ASTNode> left) {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_postfix(std::unique_ptr<ASTNode> left) {
   return std::make_unique<UnaryExprASTNode>(std::move(left),
                                             tokens[current - 1], true);
 }
 
-std::unique_ptr<ASTNode> Parser::parse_binary(std::unique_ptr<ASTNode> left) {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_binary(std::unique_ptr<ASTNode> left) {
   const Token op = tokens[current - 1];
   const Precedence next_prec = static_cast<Precedence>(
       static_cast<std::int64_t>(get_rule(op.type).precedence) + 1);
-  std::unique_ptr<ASTNode> right = parse_expression(next_prec);
+  auto right = parse_expression(next_prec);
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-  if (!right || dynamic_cast<StubASTNode *>(right.get()))
-    return right;
-#pragma GCC diagnostic pop
+  if (!right.has_value())
+    return std::unexpected(right.error());
+
   return std::make_unique<BinaryExprASTNode>(std::move(left), op,
-                                             std::move(right));
+                                             std::move(right.value()));
 }
 
-std::unique_ptr<ASTNode>
-Parser::parse_member_access([[maybe_unused]] std::unique_ptr<ASTNode> left) {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_member_access(std::unique_ptr<ASTNode> left) {
   const Token op = tokens[current - 1];
 
   if (!check(TokenType::IDENTIFIER)) {
@@ -801,49 +835,61 @@ Parser::parse_member_access([[maybe_unused]] std::unique_ptr<ASTNode> left) {
                     "identifier (field or method name) but got '{}'.",
                     op.value, peek().value));
 
-    return std::make_unique<StubASTNode>("Malformed member access");
+    return std::unexpected(ParseError::MalformedMemberAccess);
   }
 
   const Token member = advance();
 
-  if (!left || dynamic_cast<StubASTNode *>(left.get())) {
+  if (!left) {
     report_error(
         op, "Member access operator applied to an invalid or null expression.");
-    return left;
+    return std::unexpected(ParseError::InvalidMemberAccessOperand);
   }
   return std::make_unique<MemberAccessASTNode>(std::move(left), op, member);
 }
 
-std::unique_ptr<ASTNode> Parser::parse_grouping() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_grouping() {
   const Token open_paren = tokens[current - 1];
-  std::unique_ptr<ASTNode> expr = parse_expression(Precedence::NONE);
+  auto expr = parse_expression(Precedence::NONE);
 
+  if (!expr)
+    return std::unexpected(expr.error());
+
+  auto expr_rr = std::move(expr.value());
   if (!check(TokenType::R_PAREN)) {
     report_error(peek(), "Expected closing ')' after grouping expression");
     report_error(open_paren, "To match this opening paranthesis");
     synchronize();
 
-    return std::make_unique<StubASTNode>("Malformed grouping expression");
+    return std::unexpected(ParseError::MissingClosingParen);
   }
   advance();
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-  return expr;
-#pragma GCC diagnostic pop
+  return expr_rr;
 }
 
-std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
-  if (!left || dynamic_cast<StubASTNode *>(left.get()))
-    return left;
+static std::string qualified_callee_name(const ASTNode *node) noexcept {
+  if (!node)
+    return "";
+  if (const auto *v = dynamic_cast<const VariableExprASTNode *>(node))
+    return v->name;
+  if (const auto *m = dynamic_cast<const MemberAccessASTNode *>(node))
+    return qualified_callee_name(m->left_side.get()) + m->op.value +
+           m->member.value;
+  return "ambiguous";
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_call(std::unique_ptr<ASTNode> left) {
+  if (!left)
+    return std::unexpected(ParseError::InvalidCallTarget);
 
   const Token open_paren = tokens[current - 1]; // Points to the '('
   std::vector<std::unique_ptr<ASTNode>> args;
 
   while (!is_at_end() && !check(TokenType::R_PAREN)) {
-    std::unique_ptr<ASTNode> arg = parse_expression(Precedence::NONE);
+    auto arg = parse_expression(Precedence::NONE);
 
-    if (!arg || dynamic_cast<StubASTNode *>(arg.get())) {
+    if (!arg) {
       report_error(peek(),
                    "Call argument parse failed; syncing out of call frame");
 
@@ -858,7 +904,7 @@ std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
       break; // Hit ')' or EOF
     }
 
-    args.emplace_back(std::move(arg));
+    args.emplace_back(std::move(arg.value()));
 
     if (!check(TokenType::COMMA))
       break;
@@ -869,45 +915,39 @@ std::unique_ptr<ASTNode> Parser::parse_call(std::unique_ptr<ASTNode> left) {
     report_error(peek(), "Expected closing ')' after function arguments");
     report_error(open_paren, "To match this opening after paranthesis");
     synchronize();
-    return std::make_unique<StubASTNode>("Malformed function call");
+    return std::unexpected(ParseError::MissingClosingParen);
   }
   advance();
 
-  std::string fn = "ambiguous";
-  if (const VariableExprASTNode *v =
-          dynamic_cast<VariableExprASTNode *>(left.get()))
-    fn = v->name;
-  else if (const MemberAccessASTNode *m = dynamic_cast<MemberAccessASTNode *>(left.get()))
-    fn = m->member.value;
-
+  std::string fn = qualified_callee_name(left.get());
   return std::make_unique<CallASTNode>(fn, std::move(args));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_index(std::unique_ptr<ASTNode> left) {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_index(std::unique_ptr<ASTNode> left) {
   const Token open_bracket = tokens[current - 1];
-  std::unique_ptr<ASTNode> index_expr = parse_expression(Precedence::NONE);
+  auto index_expr = parse_expression(Precedence::NONE);
   if (!index_expr) {
     report_error(peek(), "Invalid expression inside array subscript.");
-    return nullptr;
+    return std::unexpected(index_expr.error());
   }
 
-  if (!consume(TokenType::RBRACKET,
-               "Syntax Error: Expected ']' after array subscript,"))
-    return nullptr;
+  if (!consume(TokenType::RBRACKET, "Expected ']' after array subscript,"))
+    return std::unexpected(ParseError::MissingClosingBracket);
 
   log_mov("Array subscript closed ']'", tokens[current - 1]);
 
   return std::make_unique<IndexASTNode>(std::move(left), open_bracket,
-                                        std::move(index_expr));
+                                        std::move(index_expr.value()));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_block() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_block() {
   if (!check(TokenType::LBRACE)) {
     report_error(peek(),
                  std::format("Block initialization failed: Expected '{{' to "
                              "open a block, but encountered '{}'",
                              peek().value));
-    return nullptr;
+    return std::unexpected(ParseError::MissingOpeningBrace);
   }
 
   const Token ob = advance();
@@ -916,9 +956,9 @@ std::unique_ptr<ASTNode> Parser::parse_block() {
   std::vector<std::unique_ptr<ASTNode>> stmts;
 
   while (!is_at_end() && !check(TokenType::RBRACE)) {
-    std::unique_ptr<ASTNode> stmt = parse_statement();
+    auto stmt = parse_statement();
     if (stmt)
-      stmts.emplace_back(std::move(stmt));
+      stmts.emplace_back(std::move(stmt.value()));
     else
       synchronize();
   }
@@ -927,57 +967,56 @@ std::unique_ptr<ASTNode> Parser::parse_block() {
                std::format("Unterminated block: Started at line {}, but "
                            "missing '}}' to close the scope",
                            ob.line)))
-    return nullptr;
+    return std::unexpected(ParseError::MissingClosingBrace);
 
   log_mov("Block closed '}'", tokens[current - 1]);
 
   return std::make_unique<BlockASTNode>(std::move(stmts));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_paren() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_paren() {
   const Token op = peek();
-  if (!consume(TokenType::L_PAREN, "Syntax Error: Expected '('"))
-    return nullptr;
+  if (!consume(TokenType::L_PAREN, std::format("Expected '(' line {}, but "
+                                               "missing '(' to open the scope.",
+                                               op.line)))
+    return std::unexpected(ParseError::MissingOpeningParen);
 
   log_mov("Opening '('", op);
 
-  std::unique_ptr<ASTNode> node = parse_expression(Precedence::NONE);
+  auto node = parse_expression(Precedence::NONE);
 
   if (!node)
-    return nullptr;
+    return std::unexpected(node.error());
 
   if (!consume(TokenType::R_PAREN,
-               std::format("Syntax Error: Parenthesized expression opened at "
+               std::format("Parenthesized expression opened at "
                            "Line {}, Column {} is missing closing ')'",
                            op.line, op.column)))
-    return nullptr;
+    return std::unexpected(ParseError::MissingClosingParen);
 
   log_mov("Closing ')'", tokens[current - 1]);
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-  return node;
-#pragma GCC diagnostic pop
+  return std::move(node.value());
 }
 
-std::unique_ptr<ASTNode> Parser::parse_import_statement() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_import_statement() {
   advance();
   advance();
 
   const Token lt_tok = peek();
 
-  if (!consume(TokenType::LT, "Syntax Error: Import path must start with '<'"))
-    return nullptr;
+  if (!consume(TokenType::LT, "Malformed Import path must start with '<'"))
+    return std::unexpected(ParseError::InvalidImportPath);
 
   log_mov("Import '<'", lt_tok.line, lt_tok.column);
 
   std::vector<std::string> path_parts;
   while (!is_at_end()) {
-    auto id_tok = consume_token(
-        TokenType::IDENTIFIER,
-        "Syntax Error: Expected module identifier in import path");
+    std::expected<Token, ParseError> id_tok = consume_token(
+        TokenType::IDENTIFIER, "Expected module identifier in import path");
     if (!id_tok)
-      return nullptr;
+      return std::unexpected(id_tok.error());
 
     path_parts.emplace_back(id_tok->value);
 
@@ -987,28 +1026,26 @@ std::unique_ptr<ASTNode> Parser::parse_import_statement() {
       break;
   }
 
-  if (!consume(TokenType::GT, "Syntax Error: Import path must end with '>'"))
-    return nullptr;
+  if (!consume(TokenType::GT, "Import path must end with '>'"))
+    return std::unexpected(ParseError::InvalidImportPath);
 
   return std::make_unique<ImportASTNode>(std::move(path_parts));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_paren_expression() {
-  std::unique_ptr<ASTNode> result = parse_expression(Precedence::NONE);
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_paren_expression() {
+  auto result = parse_expression(Precedence::NONE);
   if (!result)
-    return nullptr;
+    return std::unexpected(result.error());
 
-  if (!consume(TokenType::R_PAREN, "Syntax Error: Unclosed parenthesize "
+  if (!consume(TokenType::R_PAREN, "Unclosed parenthesize "
                                    "expression. Expected closing ')'"))
-    return nullptr;
+    return std::unexpected(ParseError::MissingClosingParen);
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-  return result;
-#pragma GCC diagnostic pop
+  return std::move(result.value());
 }
 
-std::unique_ptr<ASTNode> Parser::parse_if_body() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_if_body() {
   // Brace block — always takes precedence.
   if (check(TokenType::LBRACE))
     return parse_block();
@@ -1021,101 +1058,99 @@ std::unique_ptr<ASTNode> Parser::parse_if_body() {
     if (check(TokenType::LBRACE))
       return parse_block();
 
-    std::unique_ptr<ASTNode> stmt = parse_statement();
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
+    auto stmt = parse_statement();
+
     if (!stmt) {
-      report_error(peek(),
-                   "Syntax Error: Expected a statement or block after ':'");
-      return nullptr;
+      report_error(peek(), "Expected a statement or block after ':'");
+      return std::unexpected(stmt.error());
     }
-    return stmt;
+    return std::move(stmt.value());
   }
 
   // Inline single statement with no colon.
   auto stmt = parse_statement();
   if (!stmt) {
-    report_error(
-        peek(), "Syntax Error: Expected a valid statement as the body of 'if'");
-    return nullptr;
+    report_error(peek(), "Expected a valid statement as the body of 'if'");
+    return std::unexpected(stmt.error());
   }
 
-  return stmt;
-#pragma GCC diagnostic pop
+  return std::move(stmt.value());
 }
 
-std::unique_ptr<ASTNode> Parser::parse_if_statement() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_if_statement() {
   const Token if_tok = advance(); // consume 'if'
 
   std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
       branches;
-  std::unique_ptr<ASTNode> else_branch = nullptr;
 
+  std::unique_ptr<ASTNode> else_branch = nullptr;
   // if-branch
-  std::unique_ptr<ASTNode> if_cond = parse_paren();
+  auto if_cond = parse_paren();
 
   if (!if_cond) {
-    report_error(if_tok, "Syntax Error: 'if' keyword must be followed by a "
+    report_error(if_tok, "'if' keyword must be followed by a "
                          "condition in parantheses '()'.");
-    return nullptr;
+    return std::unexpected(if_cond.error());
   }
 
-  std::unique_ptr<ASTNode> if_body = parse_if_body();
+  auto if_body = parse_if_body();
   if (!if_body)
-    return nullptr; // Error already handled by body parser
+    return std::unexpected(
+        if_body.error()); // Error already handled by body parser
 
-  branches.emplace_back(std::move(if_cond), std::move(if_body));
+  branches.emplace_back(std::move(if_cond.value()), std::move(if_body.value()));
 
   while (check(TokenType::ELSEIF)) {
     advance(); // Consume 'else if'
 
-    std::unique_ptr<ASTNode> ei_cond = parse_paren();
+    auto ei_cond = parse_paren();
     if (!ei_cond) {
-      report_error(
-          peek(),
-          "Syntax Error: 'else if' requires a condition in parantheses '()'.");
-      return nullptr;
+      report_error(peek(),
+                   "'else if' requires a condition in parantheses '()'.");
+      return std::unexpected(ei_cond.error());
     }
-    std::unique_ptr<ASTNode> ei_body = parse_if_body();
+    auto ei_body = parse_if_body();
 
     if (!ei_body)
-      return nullptr;
+      return std::unexpected(ei_cond.error());
 
-    branches.emplace_back(std::move(ei_cond), std::move(ei_body));
+    branches.emplace_back(std::move(ei_cond.value()),
+                          std::move(ei_body.value()));
   }
 
   if (check(TokenType::ELSE)) {
     advance(); // consume 'else'
-    else_branch = parse_if_body();
+    auto else_body = parse_if_body();
 
-    if (!else_branch) {
-      report_error(peek(), "Syntax Error: 'else' keyword must be followed by a "
+    if (!else_body) {
+      report_error(peek(), "'else' keyword must be followed by a "
                            "statement or block.");
-      return nullptr;
+      return std::unexpected(else_body.error());
     }
+    else_branch = std::move(else_body.value());
   }
 
   return std::make_unique<IfASTNode>(std::move(branches),
                                      std::move(else_branch));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_function_statement() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_function_statement() {
   advance(); // Consume function
 
   Token name_tok = peek();
   if (check(TokenType::IDENTIFIER) || check(TokenType::MAIN)) {
     name_tok = advance();
   } else {
-    report_error(peek(),
-                 std::format("Syntax Error: Expected function name (identifier "
-                             "or 'main'), but found '{}' instead.",
-                             peek().value));
-    return nullptr;
+    report_error(peek(), std::format(" Expected function name (identifier "
+                                     "or 'main'), but found '{}' instead.",
+                                     peek().value));
+    return std::unexpected(ParseError::ExpectedIdentifier);
   }
 
-  if (!consume(TokenType::L_PAREN,
-               "Syntax Error: Expected '(' after function name"))
-    return nullptr;
+  if (!consume(TokenType::L_PAREN, " Expected '(' after function name"))
+    return std::unexpected(ParseError::MissingOpeningParen);
 
   std::vector<ParameterASTNode> params;
 
@@ -1124,53 +1159,99 @@ std::unique_ptr<ASTNode> Parser::parse_function_statement() {
 
   else if (!check(TokenType::R_PAREN)) {
     if (!parser_function_parameter_group(params))
-      return nullptr; // Erro reported inside parameter group parser
+      return std::unexpected(
+          ParseError::MalformedParameters); // Erro reported inside parameter
+                                            // group parser
   }
 
-  if (!consume(TokenType::R_PAREN,
-               "Syntax Error: Expected ')' after parameter list"))
-    return nullptr;
+  if (!consume(TokenType::R_PAREN, " Expected ')' after parameter list"))
+    return std::unexpected(ParseError::MissingClosingParen);
 
-  if (!consume(TokenType::ARROW,
-               "Syntax Error: Expected '->' return type indicator"))
-    return nullptr;
+  if (!consume(TokenType::ARROW, " Expected '->' return type indicator"))
+    return std::unexpected(ParseError::MissingArrow);
 
   TypeSpecifier ret = parse_type();
 
   if (ret.is_unknown()) {
-    report_error(peek(), "Syntax Error: Invalid or missing return type.");
-    return nullptr;
+    report_error(peek(), " Invalid or missing return type.");
+    return std::unexpected(ParseError::InvalidType);
   }
 
-  if (!consume(TokenType::COLON,
-               "Syntax Error: Expected ':' before function body"))
-    return nullptr;
+  if (!consume(TokenType::COLON, " Expected ':' before function body"))
+    return std::unexpected(ParseError::MissingColon);
 
-  std::unique_ptr<ASTNode> body = parse_block();
+  auto body = parse_block();
   if (!body)
-    return nullptr;
+    return std::unexpected(body.error());
 
-  std::unique_ptr<BlockASTNode> block_body = std::unique_ptr<BlockASTNode>(
-      static_cast<BlockASTNode *>(body.release()));
+  std::unique_ptr<ASTNode> body_ptr = std::move(body.value());
+  auto *block_ptr = dynamic_cast<BlockASTNode *>(body_ptr.get());
+
+  if (!block_ptr) {
+    report_error(peek(), "Function body is not a block.");
+    return std::unexpected(ParseError::InternalError);
+  }
+
+  auto block_body = std::unique_ptr<BlockASTNode>(
+      static_cast<BlockASTNode *>(body_ptr.release()));
+
   return std::make_unique<FunctionASTNode>(std::string(name_tok.value),
                                            std::move(params), ret,
                                            std::move(block_body));
 }
 
-std::unique_ptr<ASTNode> Parser::parse_statement() {
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_return_statement() {
+  advance();
+  std::vector<std::unique_ptr<ASTNode>> return_vals;
+
+  if (check(TokenType::L_PAREN)) {
+    advance();
+
+    while (!check(TokenType::R_PAREN) && !is_at_end()) {
+      auto val = parse_expression(Precedence::NONE);
+
+      if (!val)
+        return std::unexpected(std::move(val.error()));
+
+      if (check(TokenType::COMMA))
+        advance();
+      else if (!check(TokenType::R_PAREN)) {
+        report_error(peek(), "Expected ',' or ')' in return list.");
+        return std::unexpected(ParseError::UnexpectedToken);
+      }
+    }
+
+    if (!consume(TokenType::R_PAREN, "Expected ')' after return list."))
+      return std::unexpected(ParseError::MissingClosingParen);
+  } else {
+    auto val = parse_expression(Precedence::NONE);
+    if (!val)
+      return std::unexpected(val.error());
+
+    return_vals.emplace_back(std::move(val.value()));
+  }
+
+  if (!consume(TokenType::SEMI_COLON, "Expected ';' after return."))
+    return std::unexpected(ParseError::MissingSemiColon);
+
+  return std::make_unique<ReturnASTNode>(std::move(return_vals));
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
   // #import <...>
   if (check(TokenType::HASH) && peek_next().type == TokenType::IMPORT) {
     return parse_import_statement();
   }
 
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
+#pragma GCC diagnostic ignored "-Wswitch"
   switch (peek().type) {
   case TokenType::LET: {
-    std::unique_ptr<ASTNode> decl = parse_variable_declaration();
+    auto decl = parse_variable_declaration();
     if (!decl)
-      return nullptr;
-    return decl;
+      return std::unexpected(decl.error());
+    return std::move(decl.value());
   }
   case TokenType::IF:
     return parse_if_statement();
@@ -1178,27 +1259,26 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   case TokenType::FUNCTION:
     return parse_function_statement();
 
-  case TokenType::RETURN: {
-    advance();
-    std::unique_ptr<ASTNode> value = nullptr;
-    if (!check(TokenType::SEMI_COLON))
-      value = parse_primary();
-    consume(TokenType::SEMI_COLON, "Expected ';'");
-    return std::make_unique<StubASTNode>("Return ASTNode");
-  }
-
+  case TokenType::RETURN:
+    return parse_return_statement();
   }
 #pragma GCC diagnostic pop
 
-  // expression statement
-  std::unique_ptr<ASTNode> expr = parse_primary();
+  auto expr = parse_primary();
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Weverything"
-  return expr;
-#pragma GCC diagnostic pop
+  if (!expr)
+    return std::unexpected(ParseError::UnexpectedToken);
+
+  if (!check(TokenType::SEMI_COLON)) {
+    report_error(peek(), "Expected ';' at the end of variable declaration");
+  } else {
+    const Token semi = advance();
+    log_mov("Tracking ';'", semi);
+  }
+
+  return std::move(expr.value());
 }
 
-std::unique_ptr<ASTNode> Parser::parse_primary() {
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_primary() {
   return parse_expression(Precedence::NONE);
 }
