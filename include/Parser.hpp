@@ -34,10 +34,15 @@ struct Parser {
 
     char pad[6]{};
   };
+
   std::vector<Token> tokens;
   size_t current{};
 
-  Parser(std::vector<Token> tokens_list);
+  std::string filename;
+  std::vector<std::string> source_lines;
+
+  Parser(std::vector<Token> tokens_list, std::string_view file_path,
+         std::vector<std::string> lines);
   std::vector<std::unique_ptr<ASTNode>> parse_program();
 
   bool is_at_end() const {
@@ -45,12 +50,7 @@ struct Parser {
            tokens[current].type == TokenType::END_OF_FILE;
   }
 
-  Token peek() const {
-    if (is_at_end())
-      return Token{TokenType::END_OF_FILE, "", 0, 0};
-    return tokens[current];
-  }
-
+  const Token& peek() const;
   bool check(TokenType type) const {
     if (is_at_end())
       return false;
@@ -78,9 +78,8 @@ struct Parser {
   bool parser_variable_parameter_group(std::vector<ParameterASTNode> &params);
   bool is_statement_start(TokenType type);
   ParserRule get_rule(TokenType type);
-  void expect_semicolon();
+  void report_error(const Token &tok, std::string_view msg);
   void synchronize();
-  void recover();
 
   TypeSpecifier parse_type();
   std::unique_ptr<ASTNode> parse_variable_declaration();
@@ -94,12 +93,13 @@ struct Parser {
   std::unique_ptr<ASTNode> parse_prefix();
   std::unique_ptr<ASTNode> parse_postfix(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_binary(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_memeber_access(std::unique_ptr<ASTNode> left);
+  std::unique_ptr<ASTNode> parse_member_access(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_grouping();
   std::unique_ptr<ASTNode> parse_call(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_index(std::unique_ptr<ASTNode> left);
   std::unique_ptr<ASTNode> parse_block();
   std::unique_ptr<ASTNode> parse_paren();
+  std::unique_ptr<ASTNode> parse_import_statement();
   std::unique_ptr<ASTNode> parse_paren_expression();
   std::unique_ptr<ASTNode> parse_if_body();
   std::unique_ptr<ASTNode> parse_if_statement();
