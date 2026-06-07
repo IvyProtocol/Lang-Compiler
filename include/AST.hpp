@@ -28,13 +28,6 @@ struct LiteralASTNode : public ASTNode {
   void debug_print(const std::string &prefix = "") const override;
 };
 
-struct StubASTNode : public ASTNode {
-  std::string name;
-  StubASTNode(std::string_view n);
-  MAKE_AST_NODE_UNCOPYABLE(StubASTNode)
-  void debug_print(const std::string &prefix = "") const override;
-};
-
 struct BinaryExprASTNode : public ASTNode {
   std::unique_ptr<ASTNode> left;
   Token op;
@@ -201,10 +194,12 @@ struct MemberAccessASTNode : public ASTNode {
   void debug_print(const std::string &prefix = "") const override;
 };
 
-struct Parser;
+struct ReturnASTNode : public ASTNode {
+  std::vector<std::unique_ptr<ASTNode>> expression;
 
-using NudFunc = std::unique_ptr<ASTNode> (Parser::*)();
-using LedFunc =
-    std::unique_ptr<ASTNode> (Parser::*)(std::unique_ptr<ASTNode> left);
+  ReturnASTNode(std::vector<std::unique_ptr<ASTNode>> expr);
+  MAKE_AST_NODE_UNCOPYABLE(ReturnASTNode)
+  void debug_print(const std::string &prefix = "") const override;
+};
 
 #endif
