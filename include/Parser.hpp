@@ -2,8 +2,10 @@
 #define PARSER_HPP
 
 #include "AST.hpp"
-#include <optional>
+#include <expected>
 #include <vector>
+
+struct Parser;
 
 enum class Precedence : std::int64_t {
   NONE,
@@ -19,6 +21,38 @@ enum class Precedence : std::int64_t {
   CALL_INDEX,   // function(), array[index]
   MEMBER_ACCESS // ., ::
 };
+
+enum class ParseError {
+  UnexpectedToken,
+  MissingSemiColon,
+  MissingOpeningParen,
+  MissingOpeningBrace,
+  MissingClosingParen,
+  MissingClosingBracket,
+  MissingClosingBrace,
+  MissingArrow,
+  MissingColon,
+  MalformedParameters,
+  MalformedRangeLiteral,
+  MalformedMemberAccess,
+  InvalidImportPath,
+  InvalidExpression,
+  InvalidDeclarationTarget,
+  InvalidCallTarget,
+  InvalidType,
+  AssignmentCountMismatch,
+  InvalidAssignmentTarget,
+  InvalidArrayMalformed,
+  InvalidMemberAccessOperand,
+  ExpectedIdentifier,
+  InternalError,
+  UnexpectedEndOfFile
+};
+
+using NudFunc =
+    std::expected<std::unique_ptr<ASTNode>, ParseError> (Parser::*)();
+using LedFunc = std::expected<std::unique_ptr<ASTNode>, ParseError> (Parser::*)(
+    std::unique_ptr<ASTNode> left);
 
 struct ParserRule {
   Precedence precedence;
@@ -43,14 +77,13 @@ struct Parser {
 
   Parser(std::vector<Token> tokens_list, std::string_view file_path,
          std::vector<std::string> lines);
-  std::vector<std::unique_ptr<ASTNode>> parse_program();
 
   bool is_at_end() const {
     return current >= tokens.size() ||
            tokens[current].type == TokenType::END_OF_FILE;
   }
 
-  const Token& peek() const;
+  const Token &peek() const;
   bool check(TokenType type) const {
     if (is_at_end())
       return false;
@@ -69,7 +102,8 @@ struct Parser {
     return tokens[current + 1];
   }
 
-  std::optional<Token> consume_token(TokenType type, std::string_view msg);
+  std::expected<Token, ParseError> consume_token(TokenType type,
+                                                 std::string_view msg);
   bool consume(TokenType type, std::string_view msg);
   bool parse_parameter_list(std::vector<ParameterASTNode> &params,
                             const ParameterOptsASTNode &opts,
@@ -82,30 +116,41 @@ struct Parser {
   void synchronize();
 
   TypeSpecifier parse_type();
-  std::unique_ptr<ASTNode> parse_variable_declaration();
-  std::unique_ptr<ASTNode> parse_assignment(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_array_literal();
-  std::unique_ptr<ASTNode> parse_range_literal();
-  std::unique_ptr<ASTNode> parse_expression(Precedence min_precedence);
+  std::vector<std::unique_ptr<ASTNode>> parse_program();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_variable_declaration();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_assignment(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_array_literal();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_range_literal();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_expression(Precedence min_precedence);
 
-  std::unique_ptr<ASTNode> parse_literal();
-  std::unique_ptr<ASTNode> parse_identifier();
-  std::unique_ptr<ASTNode> parse_prefix();
-  std::unique_ptr<ASTNode> parse_postfix(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_binary(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_member_access(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_grouping();
-  std::unique_ptr<ASTNode> parse_call(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_index(std::unique_ptr<ASTNode> left);
-  std::unique_ptr<ASTNode> parse_block();
-  std::unique_ptr<ASTNode> parse_paren();
-  std::unique_ptr<ASTNode> parse_import_statement();
-  std::unique_ptr<ASTNode> parse_paren_expression();
-  std::unique_ptr<ASTNode> parse_if_body();
-  std::unique_ptr<ASTNode> parse_if_statement();
-  std::unique_ptr<ASTNode> parse_function_statement();
-  std::unique_ptr<ASTNode> parse_statement();
-  std::unique_ptr<ASTNode> parse_primary();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_literal();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_identifier();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_prefix();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_postfix(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_binary(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_member_access(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_grouping();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_call(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_index(std::unique_ptr<ASTNode> left);
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_block();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_paren();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_import_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_paren_expression();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_body();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_return_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_function_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_primary();
 };
 
 #endif
