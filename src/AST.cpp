@@ -5,8 +5,6 @@ ASTNode::~ASTNode() = default;
 
 LiteralASTNode::LiteralASTNode(std::string_view val) : value(std::move(val)) {}
 
-StubASTNode::StubASTNode(std::string_view n) : name(n) {}
-
 VariableExprASTNode::VariableExprASTNode(std::string_view n) : name(n) {}
 
 VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params,
@@ -71,6 +69,9 @@ MemberAccessASTNode::MemberAccessASTNode(std::unique_ptr<ASTNode> lhs,
                                          Token op_tok, Token member_tok)
     : left_side(std::move(lhs)), op(op_tok), member(member_tok) {}
 
+ReturnASTNode::ReturnASTNode(std::vector<std::unique_ptr<ASTNode>> expr)
+    : expression(std::move(expr)) {}
+
 // ─── Internal logging helpers
 // ───────────────────────────────────────────────── Centralised here so every
 // format string is in one place; a mismatch in arguments causes a compile-time
@@ -84,11 +85,6 @@ bool TypeSpecifier::is_unknown() const {
 void LiteralASTNode::debug_print(
     [[maybe_unused]] const std::string &prefix) const {
   std::println("[Literal]: {}", value);
-}
-
-void StubASTNode::debug_print(
-    [[maybe_unused]] const std::string &prefix) const {
-  std::println("[Stub]: {}", name);
 }
 
 void VariableExprASTNode::debug_print(
@@ -327,4 +323,19 @@ void MemberAccessASTNode::debug_print(const std::string &prefix) const {
   }
 
   std::println("{}└── [Identifier]: {}", prefix, member.value);
+}
+
+void ReturnASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Return]");
+
+  for (size_t i{}; i < expression.size(); ++i) {
+    const bool last = (i == expression.size() - 1);
+    std::print("{}{}", prefix, last ? "└── " : "├── ");
+
+    if (expression[i]) {
+      expression[i]->debug_print(prefix + (last ? "    " : "│   "));
+    } else {
+      std::println("[null]");
+    }
+  }
 }
