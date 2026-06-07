@@ -30,7 +30,7 @@ struct LiteralASTNode : public ASTNode {
 
 struct StubASTNode : public ASTNode {
   std::string name;
-  explicit StubASTNode(std::string_view n);
+  StubASTNode(std::string_view n);
   MAKE_AST_NODE_UNCOPYABLE(StubASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
@@ -61,6 +61,8 @@ struct TypeSpecifier {
   int arr_size{};
   bool is_const{false};
   bool is_array{false};
+
+  bool is_unknown() const;
   long : (8 * 2);
 };
 
@@ -91,6 +93,14 @@ struct ParameterASTNode : public ASTNode {
   void debug_print(const std::string &prefix = "") const override;
 };
 
+struct ImportASTNode : public ASTNode {
+  std::vector<std::string> mod_path;
+
+  ImportASTNode(std::vector<std::string> path);
+  MAKE_AST_NODE_UNCOPYABLE(ImportASTNode)
+  void debug_print(const std::string &prefix = "") const override;
+};
+
 struct VarDeclASTNode : public ASTNode {
   std::vector<ParameterASTNode> parameters;
   std::vector<std::unique_ptr<ASTNode>> initializers;
@@ -109,10 +119,12 @@ struct VariableExprASTNode : public ASTNode {
 };
 
 struct AssignmentASTNode : public ASTNode {
-  std::string variable_name;
+  std::unique_ptr<ASTNode> left_side;
+  Token op;
   std::unique_ptr<ASTNode> new_value;
 
-  AssignmentASTNode(std::string_view name, std::unique_ptr<ASTNode> val);
+  AssignmentASTNode(std::unique_ptr<ASTNode> lhs, Token op_tok,
+                    std::unique_ptr<ASTNode> val);
   MAKE_AST_NODE_UNCOPYABLE(AssignmentASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
@@ -124,6 +136,17 @@ struct CallASTNode : public ASTNode {
   CallASTNode(std::string_view name,
               std::vector<std::unique_ptr<ASTNode>> args);
   MAKE_AST_NODE_UNCOPYABLE(CallASTNode)
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct IndexASTNode : public ASTNode {
+  std::unique_ptr<ASTNode> arr_expr;
+  Token op;
+  std::unique_ptr<ASTNode> iexpr;
+
+  IndexASTNode(std::unique_ptr<ASTNode> arr, Token op_tok,
+               std::unique_ptr<ASTNode> idx);
+  MAKE_AST_NODE_UNCOPYABLE(IndexASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
 
@@ -164,6 +187,17 @@ struct FunctionASTNode : public ASTNode {
   FunctionASTNode(std::string name, std::vector<ParameterASTNode> params,
                   TypeSpecifier ret, std::unique_ptr<BlockASTNode> body);
   MAKE_AST_NODE_UNCOPYABLE(FunctionASTNode)
+  void debug_print(const std::string &prefix = "") const override;
+};
+
+struct MemberAccessASTNode : public ASTNode {
+  std::unique_ptr<ASTNode> left_side; // The object or namespace tree
+  Token op;                           // Captured '.' or '::' token
+  Token member;                       // The field or method name identifier
+
+  MemberAccessASTNode(std::unique_ptr<ASTNode> lhs, Token op_tok,
+                      Token member_tok);
+  MAKE_AST_NODE_UNCOPYABLE(MemberAccessASTNode)
   void debug_print(const std::string &prefix = "") const override;
 };
 
