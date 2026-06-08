@@ -56,13 +56,13 @@ ParameterASTNode::ParameterASTNode(std::unique_ptr<ASTNode> ne,
                                    TypeSpecifier ty,
                                    std::unique_ptr<RangeLiteralASTNode> rl,
                                    std::unique_ptr<ASTNode> vl)
-    : node(std::move(ne)), type(ty), defaultValue(std::move(vl)),
+    : node(std::move(ne)), type(std::move(ty)), defaultValue(std::move(vl)),
       range(std::move(rl)) {}
 
 FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> p,
-                                 TypeSpecifier ret,
+                                 std::vector<TypeSpecifier> ret,
                                  std::unique_ptr<BlockASTNode> b)
-    : name(std::move(n)), parameters(std::move(p)), return_type(ret),
+    : name(std::move(n)), parameters(std::move(p)), return_type(std::move(ret)),
       body(std::move(b)) {}
 
 MemberAccessASTNode::MemberAccessASTNode(std::unique_ptr<ASTNode> lhs,
@@ -71,6 +71,19 @@ MemberAccessASTNode::MemberAccessASTNode(std::unique_ptr<ASTNode> lhs,
 
 ReturnASTNode::ReturnASTNode(std::vector<std::unique_ptr<ASTNode>> expr)
     : expression(std::move(expr)) {}
+
+NamespaceASTNode::NamespaceASTNode(std::string p,
+                                   std::unique_ptr<BlockASTNode> b)
+    : parent(std::move(p)), body(std::move(b)) {}
+
+LoopConditionASTNode::LoopConditionASTNode(std::unique_ptr<ASTNode> i,
+                                           std::unique_ptr<ASTNode> c,
+                                           std::unique_ptr<ASTNode> p)
+    : initialize(std::move(i)), condition(std::move(c)), prefix(std::move(p)) {}
+
+ForLoopASTNode::ForLoopASTNode(std::unique_ptr<LoopConditionASTNode> c,
+                               std::unique_ptr<ASTNode> b)
+    : condition(std::move(c)), block(std::move(b)) {}
 
 // ─── Internal logging helpers
 // ───────────────────────────────────────────────── Centralised here so every
@@ -279,6 +292,12 @@ void ParameterASTNode::debug_print(const std::string &prefix) const {
     std::println("[null]");
 
   std::println("{}├── Type: {}", prefix, type.base_types);
+  if (type.is_array && type.arr_size) {
+    std::print("{}├── Size: ", prefix); // New branch for the array size
+    type.arr_size->debug_print(prefix + "│       ");
+  } else {
+    std::println("{}├── Size: [none]", prefix);
+  }
 
   bool has_range = (range != nullptr);
   std::string default_branch = has_range ? "├──" : "└──";
@@ -299,14 +318,33 @@ void ParameterASTNode::debug_print(const std::string &prefix) const {
 
 void FunctionASTNode::debug_print(const std::string &prefix) const {
   std::println("[Function]: {}", name);
-  std::println("{}└── Returns: {}", prefix, return_type.base_types);
-  for (size_t i{}; i < parameters.size(); ++i) {
-    const bool last = (i == parameters.size() - 1);
-    std::print("{}{}", prefix, last ? "└── " : "├── ");
 
+  std::string r_str;
+
+  if (return_type.empty())
+    r_str = "void";
+  else if (return_type.size() == 1)
+    r_str = return_type[0].base_types;
+  else {
+    r_str = "(";
+    for (size_t i{}; i < return_type.size(); ++i) {
+      r_str += return_type[i].base_types;
+      if (i + 1 < return_type.size())
+        r_str += ", ";
+    }
+    r_str += ")";
+  }
+
+  std::println("{}├── Returns: {}", prefix, r_str);
+  bool has_body = (body != nullptr);
+  size_t total_ch = parameters.size() + (has_body ? 1 : 0);
+
+  for (size_t i{}; i < parameters.size(); ++i) {
+    const bool last = (i == total_ch - 1);
+    std::print("{}{}", prefix, last ? "└── " : "├── ");
     parameters[i].debug_print(prefix + (last ? "    " : "│   "));
   }
-  if (body) {
+  if (has_body) {
     std::print("{}└── Body: ", prefix);
     body->debug_print(prefix + "    ");
   } else {
@@ -337,5 +375,61 @@ void ReturnASTNode::debug_print(const std::string &prefix) const {
     } else {
       std::println("[null]");
     }
+  }
+}
+
+void NamespaceASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Namespace]");
+  std::print("{}└──", prefix);
+
+  if (body)
+    body->debug_print(prefix + "    ");
+  else
+    std::println("[null]");
+}
+
+void LoopConditionASTNode::debug_print(const std::string &indent) const {
+  std::println("[LoopCondition]");
+
+  // Collect existing nodes to manage the tree branches
+  struct Child {
+    std::string label;
+    const ASTNode *node;
+  };
+  std::vector<Child> children;
+  if (initialize)
+    children.emplace_back("Init", initialize.get());
+  if (condition)
+    children.emplace_back("Cond", condition.get());
+  if (this->prefix)
+    children.emplace_back("Prefix", this->prefix.get());
+
+  for (size_t i{}; i < children.size(); ++i) {
+    const bool last = (i == children.size() - 1);
+    std::print("{}{}{}: ", indent, last ? "└── " : "├── ", children[i].label);
+
+    // Pass the indentation forward
+    children[i].node->debug_print(indent + (last ? "    " : "│   "));
+  }
+}
+
+void ForLoopASTNode::debug_print(const std::string &indent) const {
+  std::println("[ForLoop]");
+
+  // 1. Print the Condition (LoopConditionASTNode)
+  std::print("{}├── Condition: ", indent);
+  if (condition) {
+    // We treat the LoopCondition as a child
+    condition->debug_print(indent + "│   ");
+  } else {
+    std::println("[Empty Condition]");
+  }
+
+  // 2. Print the Block (Body)
+  std::print("{}└── Body: ", indent);
+  if (block) {
+    block->debug_print(indent + "    ");
+  } else {
+    std::println("[Invalid Body]");
   }
 }
