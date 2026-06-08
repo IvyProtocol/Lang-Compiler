@@ -124,8 +124,14 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
                                   TokenType term_type) {
   // OUTER LOOP: Iterates through each type-group (e.g., "int: ..." or "str:
   // ...")
-  while (!is_at_end() && !check(term_type)) {
-    TypeSpecifier group_type = parse_type();
+  while (!is_at_end() && !check(term_type) && peek().type != TokenType::IN &&
+         peek().value != "in") {
+    auto type_res = parse_type();
+
+    if (!type_res)
+      return false;
+
+    TypeSpecifier group_type = std::move(type_res.value());
 
     // If a colon is missing, it would call synchronize() globally and discard
     // the block.
@@ -142,7 +148,8 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
 
     // INNER LOOP: Iterates through the comma-separated variables mapped to the
     // current group_type
-    while (!is_at_end() && !check(term_type)) {
+    while (!is_at_end() && !check(term_type) && peek().type != TokenType::IN &&
+           peek().value != "in") {
 
       // Manually check the identifier to bypass global synchronization traps.
       if (!check(TokenType::IDENTIFIER)) {
@@ -228,7 +235,7 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
             std::move(range_start), op_tok, std::move(end_node));
       }
 
-      params.emplace_back(std::move(param_target), group_type,
+      params.emplace_back(std::move(param_target), std::move(group_type),
                           std::move(param_range), std::move(default_value));
 
       // Passive exit, if assignments are not parsed inline here. Stop
@@ -251,7 +258,9 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
                  // being declared!
         }
         if (tokens[scan_idx].type == TokenType::COMMA ||
-            tokens[scan_idx].type == term_type) {
+            tokens[scan_idx].type == term_type ||
+            tokens[scan_idx].type == TokenType::IN ||
+            tokens[scan_idx].value == "in") {
           break; // Hit another comma or end symbol first, so it's just another
                  // variable of the SAME type.
         }
@@ -271,6 +280,130 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
   return true;
 }
 
+bool Parser::parse_loopParam_list(const LoopOptsASTNode &cond,
+                                  std::vector<LoopConditionASTNode> &c_block) {
+  while (!is_at_end()) {
+    std::expected<std::unique_ptr<ASTNode>, ParseError> for_init = nullptr;
+    std::expected<std::unique_ptr<ASTNode>, ParseError> for_cond = nullptr;
+    std::expected<std::unique_ptr<ASTNode>, ParseError> for_prefix = nullptr;
+    if (check(TokenType::LET)) {
+      report_error(peek(),
+                   std::format("Invalid initialization target: Expected "
+                               "initialization of an identifier "
+                               "in the local scope. "
+                               "Found '{}' instead. '{}' is not allowed.",
+                               peek().value, peek().value));
+      return false;
+    }
+
+    if (cond.allow_C_style) {
+      for_init = parse_variable_declaration(false, true);
+      if (!for_init)
+        return false;
+
+      for_cond = parse_expression(Precedence::NONE);
+      if (!for_cond)
+        return false;
+
+      if (check(TokenType::SEMI_COLON)) {
+        advance();
+
+        for_prefix = parse_expression(Precedence::NONE);
+        if (!for_prefix)
+          return false;
+
+        auto *node = for_prefix.value().get();
+        if (!dynamic_cast<AssignmentASTNode *>(node) &&
+            !dynamic_cast<UnaryExprASTNode *>(node)) {
+          report_error(peek(), "For-loop increament must be an assignment or "
+                               "unary expression (e.g. i += 2, i++)");
+          return false;
+        }
+
+        if (check(TokenType::SEMI_COLON)) {
+          report_error(
+              peek(), std::format("Forbidden semi-colon: Default prefix ';' "
+                                  "semi-colon are strictly prohibited "
+                                  "for 'for' loops. "
+                                  "Function signatures and similar contexts do "
+                                  "not allow inline defaults here."));
+          return false;
+        }
+      } else {
+
+        // If no semi-colon, it must be ommited increament loop header.
+        if (!check(TokenType::R_PAREN) && !check(TokenType::LBRACE)) {
+          report_error(peek(), "Expected ';' to separate loop increment, or a "
+                               "closing brace/parenthesis to end the header.");
+          return false;
+        }
+      }
+
+      c_block.emplace_back(
+          std::move(for_init.value()), std::move(for_cond.value()),
+          for_prefix ? std::move(for_prefix.value()) : nullptr);
+      break;
+    } else if (cond.allow_Loop_Range_style) {
+
+      std::vector<ParameterASTNode> range_vars;
+      if (!parser_for_variable_group(range_vars))
+        return false;
+
+      for_init = std::make_unique<VarDeclASTNode>(
+          std::move(range_vars), std::vector<std::unique_ptr<ASTNode>>{});
+      if (!for_init)
+        return false;
+
+      if (check(TokenType::SEMI_COLON))
+        return false;
+
+      if (check(TokenType::IN) || peek().value == "in")
+        advance();
+      else {
+        report_error(peek(), "Expected 'in' after variable_declaration");
+        return false;
+      }
+
+      Token op_tok;
+
+      bool has_paren = check(TokenType::L_PAREN);
+      if (has_paren) {
+        op_tok = peek();
+        advance();
+      }
+
+      for_cond = parse_expression(Precedence::NONE);
+      if (!for_cond)
+        return false;
+
+      if (has_paren)
+        if (!consume(TokenType::R_PAREN,
+                     std::format("Paranthesized expression opened at "
+                                 "Line {}, Column {} is missing closing')'",
+                                 op_tok.line, op_tok.column)))
+          return false;
+
+      c_block.emplace_back(std::move(for_init.value()),
+                           std::move(for_cond.value()), nullptr);
+      break;
+    } else {
+      report_error(peek(),
+                   "Internal error: no valid for-loop style configured");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool Parser::parser_for_variable_group(std::vector<ParameterASTNode> &params) {
+  ParameterOptsASTNode opts;
+  opts.allow_assignment = false;
+  opts.allow_ranges = false;
+  opts.fatal_on_assign = false;
+
+  return parse_parameter_list(params, opts, TokenType::IN);
+}
+
 bool Parser::parser_function_parameter_group(
     std::vector<ParameterASTNode> &params) {
   ParameterOptsASTNode opts;
@@ -287,6 +420,29 @@ bool Parser::parser_variable_parameter_group(
   opts.allow_ranges = false;
   opts.fatal_on_assign = false;
   return parse_parameter_list(params, opts, TokenType::SEMI_COLON);
+}
+
+bool Parser::parser_for_condition_group(
+    std::vector<LoopConditionASTNode> &params) {
+  LoopOptsASTNode opts;
+
+  bool is_range = false;
+  for (size_t i = current; i < tokens.size(); i++) {
+    if (tokens[i].type == TokenType::IN || tokens[i].value == "in") {
+      is_range = true;
+      break;
+    }
+    if (tokens[i].type == TokenType::ASSIGN ||
+        tokens[i].type == TokenType::SEMI_COLON ||
+        tokens[i].type == TokenType::LBRACE ||
+        tokens[i].type == TokenType::R_PAREN)
+      break;
+  }
+
+  opts.allow_Loop_Range_style = is_range;
+  opts.allow_C_style = !is_range;
+
+  return parse_loopParam_list(opts, params);
 }
 
 void Parser::synchronize() {
@@ -319,6 +475,59 @@ void Parser::report_error(const Token &tok, std::string_view msg) {
   // Explicitly reset after the underline
   std::println("      | {}{}{}{}", padding, ConsoleColor::BOLD_RED, underline,
                ConsoleColor::RESET);
+}
+
+[[maybe_unused]] static std::string DecodeString(const std::string &text) {
+  std::string out;
+
+  if (text.empty())
+    return out;
+
+  const size_t quote = text.find('"');
+
+  if (quote == std::string::npos)
+    return out;
+
+  for (size_t i = quote + 1; i + 1 < text.size(); ++i) {
+    if (text[i] != '\\') {
+      out += text[i];
+      continue;
+    }
+
+    if (++i + 1 > text.size())
+      break;
+
+    switch (text[i]) {
+    case 'n':
+      out += '\n';
+      break;
+    case 't':
+      out += '\t';
+      break;
+    case 'r':
+      out += '\r';
+      break;
+    case '0':
+      out += '\0';
+      break;
+    case '\\':
+      out += '\\';
+      break;
+    case '\'':
+      out += '\'';
+      break;
+    case '"':
+      out += '"';
+      break;
+    case '*':
+      out += '*';
+      break;
+    default:
+      out += text[i];
+      break;
+    }
+  }
+  return out;
 }
 
 ParserRule Parser::get_rule(TokenType type) {
@@ -388,6 +597,9 @@ ParserRule Parser::get_rule(TokenType type) {
     return {Precedence::CALL_INDEX, &Parser::parse_array_literal,
             &Parser::parse_index};
 
+  case TokenType::RANGE:
+    return {Precedence::COMPARISON, nullptr, &Parser::parse_range_infix};
+
   case TokenType::IMPORT:
   case TokenType::FUNCTION:
   case TokenType::MAIN:
@@ -411,7 +623,6 @@ ParserRule Parser::get_rule(TokenType type) {
   case TokenType::HASH:
   case TokenType::AMPERSAND:
   case TokenType::ARROW:
-  case TokenType::RANGE:
   case TokenType::MAP_ARROW:
   case TokenType::QUESTION:
   case TokenType::COLON:
@@ -430,7 +641,7 @@ ParserRule Parser::get_rule(TokenType type) {
   return {Precedence::NONE, nullptr, nullptr};
 }
 
-TypeSpecifier Parser::parse_type() {
+std::expected<TypeSpecifier, ParseError> Parser::parse_type() {
   TypeSpecifier type_info;
   std::string full_type_name;
 
@@ -449,7 +660,6 @@ TypeSpecifier Parser::parse_type() {
   // Track [] (Fixed or dynamic arrays)
   int angle_depth = 0;
   int paren_depth = 0;
-  int square_depth = 0;
 
   while (!is_at_end()) {
     TokenType current_type = peek().type;
@@ -457,13 +667,16 @@ TypeSpecifier Parser::parse_type() {
     if (current_type == TokenType::SEMI_COLON)
       break;
 
-    if (angle_depth == 0 && paren_depth == 0 && square_depth == 0)
+    if (angle_depth == 0 && paren_depth == 0)
       if (current_type == TokenType::COLON ||
           current_type == TokenType::LBRACE ||
           current_type == TokenType::R_PAREN ||
           current_type == TokenType::COMMA ||
           current_type == TokenType::ARROW ||
-          current_type == TokenType::SEMI_COLON)
+          current_type == TokenType::SEMI_COLON ||
+          current_type == TokenType::LBRACKET ||
+          current_type == TokenType::IN || current_type == TokenType::ASSIGN ||
+          peek().value == "in")
         break;
 
     Token t = advance();
@@ -476,14 +689,10 @@ TypeSpecifier Parser::parse_type() {
       paren_depth++;
     else if (t.type == TokenType::R_PAREN)
       paren_depth--;
-    else if (t.type == TokenType::LBRACKET)
-      square_depth++;
-    else if (t.type == TokenType::RBRACKET)
-      square_depth--;
 
     // Sanity validation: Reject blatant operaors out-of-hand if they land
     // outside template params.
-    if (angle_depth == 0 && paren_depth == 0 && square_depth == 0)
+    if (angle_depth == 0 && paren_depth == 0)
       if (t.type == TokenType::PLUS || t.type == TokenType::MINUS ||
           t.type == TokenType::MUL || t.type == TokenType::DIV ||
           t.type == TokenType::ASSIGN) {
@@ -502,7 +711,7 @@ TypeSpecifier Parser::parse_type() {
     full_type_name += t.value;
   }
 
-  if (angle_depth != 0 || paren_depth != 0 || square_depth != 0)
+  if (angle_depth != 0 || paren_depth != 0)
     report_error(
         peek(), "Malformed type signature: Unbalanced brackets or parantheses");
 
@@ -513,8 +722,31 @@ TypeSpecifier Parser::parse_type() {
     type_info.base_types = "unknown";
   } else {
     type_info.base_types = full_type_name;
+    // tokens[current - 1] might be off if we broke on LBRACKET but uhh..
+    // string value is correct, no worries.
     log_mov(std::format("Tracking type '{}'", full_type_name),
             tokens[current - 1]);
+  }
+
+  if (check(TokenType::LBRACKET)) {
+    advance();
+    type_info.is_array = true;
+
+    if (!check(TokenType::RBRACKET)) {
+      auto size_expr = parse_expression(Precedence::NONE);
+
+      if (!size_expr) {
+        report_error(peek(), std::format("Invalid array size expression: {}.",
+                                         type_info.base_types));
+        return std::unexpected(size_expr.error());
+      }
+
+      type_info.arr_size = std::move(size_expr.value());
+    }
+
+    if (!consume(TokenType::RBRACKET, "Expected ']' after array size.")) {
+      return std::unexpected(ParseError::MissingClosingBracket);
+    }
   }
 
   return type_info;
@@ -561,8 +793,10 @@ Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
-Parser::parse_variable_declaration() {
-  const Token let_token = advance();
+Parser::parse_variable_declaration(bool let_allowed, bool semi_allowed) {
+  Token let_token = peek();
+  if (let_allowed)
+    let_token = advance();
 
   std::vector<ParameterASTNode> all_vars;
   if (!parser_variable_parameter_group(all_vars)) {
@@ -585,10 +819,11 @@ Parser::parse_variable_declaration() {
                !check(TokenType::SEMI_COLON))
           advance();
 
-        if (check(TokenType::COMMA)) {
-          advance();
-          continue;
-        }
+        if (semi_allowed)
+          if (check(TokenType::COMMA)) {
+            advance();
+            continue;
+          }
         break;
       }
 
@@ -659,13 +894,14 @@ Parser::parse_variable_declaration() {
     }
   }
 
-  if (!check(TokenType::SEMI_COLON)) {
-    report_error(peek(), "Expected ';' at the end of variable declaration");
-    report_error(let_token, "To complete this variable declaration");
+  if (semi_allowed)
+    if (!check(TokenType::SEMI_COLON)) {
+      report_error(peek(), "Expected ';' at the end of variable declaration");
+      report_error(let_token, "To complete this variable declaration");
 
-    synchronize();
-    return std::unexpected(ParseError::MissingSemiColon);
-  }
+      synchronize();
+      return std::unexpected(ParseError::MissingSemiColon);
+    }
   advance(); // Safely consume ';'
 
   return std::make_unique<VarDeclASTNode>(std::move(all_vars),
@@ -712,40 +948,28 @@ Parser::parse_array_literal() {
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
-Parser::parse_range_literal() {
-  auto left_res = parse_primary();
-
-  if (!left_res.has_value())
-    return std::unexpected(left_res.error());
-
-  std::unique_ptr<ASTNode> left_node = std::move(left_res.value());
-  if (!check(TokenType::RANGE))
-    return left_node;
-
-  const Token op_tok = advance();
-
+Parser::parse_range_infix(std::unique_ptr<ASTNode> left) {
+  // Pratt loop already consumes '..' token.
+  const Token op_tok = tokens[current - 1];
   std::unique_ptr<ASTNode> right_node = nullptr;
 
-  if (check(TokenType::R_PAREN) || check(TokenType::COMMA)) {
-  }
+  if (!check(TokenType::R_PAREN) && !check(TokenType::COMMA) &&
+      !check(TokenType::SEMI_COLON)) {
+    auto right_res = parse_expression(Precedence::COMPARISON);
 
-  else if (check(TokenType::INT_LITERAL)) {
-    auto right_res = parse_primary();
-    if (!right_res.has_value())
-      return std::unexpected(right_res.error());
-
+    if (!right_res) {
+      report_error(
+          peek(),
+          std::format("Range operator '...' followed by "
+                      "invalid token '{}' ."
+                      "Expected an integer literal for a bounded range, "
+                      "or nothing for an infinite range.",
+                      peek().value));
+      return std::unexpected(ParseError::MalformedRangeLiteral);
+    }
     right_node = std::move(right_res.value());
-  } else {
-    report_error(peek(),
-                 std::format("Range operator '...' followed by "
-                             "invalid token '{}' ."
-                             "Expected an integer literal for a bounded range, "
-                             "or nothing for an infinite range.",
-                             peek().value));
-    return std::unexpected(ParseError::MalformedRangeLiteral);
   }
-
-  return std::make_unique<RangeLiteralASTNode>(std::move(left_node), op_tok,
+  return std::make_unique<RangeLiteralASTNode>(std::move(left), op_tok,
                                                std::move(right_node));
 }
 
@@ -1050,8 +1274,8 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_if_body() {
   if (check(TokenType::LBRACE))
     return parse_block();
 
-  // Optional `:` separator — consume it and fall through to a single statement
-  // or brace block on the next line.
+  // Optional `:` separator — consume it and fall through to a single
+  // statement or brace block on the next line.
   if (check(TokenType::COLON)) {
     advance();
 
@@ -1170,11 +1394,47 @@ Parser::parse_function_statement() {
   if (!consume(TokenType::ARROW, " Expected '->' return type indicator"))
     return std::unexpected(ParseError::MissingArrow);
 
-  TypeSpecifier ret = parse_type();
+  std::vector<TypeSpecifier> r_types;
+  if (check(TokenType::L_PAREN)) {
+    advance();
 
-  if (ret.is_unknown()) {
-    report_error(peek(), " Invalid or missing return type.");
-    return std::unexpected(ParseError::InvalidType);
+    while (!is_at_end() && !check(TokenType::R_PAREN)) {
+      auto type_res = parse_type();
+      if (!type_res)
+        return std::unexpected(ParseError::InvalidType);
+
+      TypeSpecifier ret_type = std::move(type_res.value());
+
+      if (ret_type.is_unknown()) {
+        report_error(peek(), "Invalid type inside function return tuple");
+        return std::unexpected(ParseError::InvalidType);
+      }
+      r_types.emplace_back(std::move(ret_type));
+
+      if (check(TokenType::COMMA))
+        advance();
+      else if (!check(TokenType::R_PAREN)) {
+        report_error(peek(),
+                     "Expected ',' or ')' within multiple return types list.");
+        return std::unexpected(ParseError::UnexpectedToken);
+      }
+    }
+
+    if (!consume(TokenType::R_PAREN,
+                 "Expected closing ')' after tuple return type list."))
+      return std::unexpected(ParseError::MissingClosingParen);
+  } else {
+    auto ret_type = parse_type();
+    if (!ret_type)
+      return std::unexpected(ParseError::InvalidType);
+
+    TypeSpecifier ret = std::move(ret_type.value());
+
+    if (ret.is_unknown()) {
+      report_error(peek(), "Invalid or missing return type.");
+      return std::unexpected(ParseError::InvalidType);
+    }
+    r_types.emplace_back(std::move(ret));
   }
 
   if (!consume(TokenType::COLON, " Expected ':' before function body"))
@@ -1195,9 +1455,9 @@ Parser::parse_function_statement() {
   auto block_body = std::unique_ptr<BlockASTNode>(
       static_cast<BlockASTNode *>(body_ptr.release()));
 
-  return std::make_unique<FunctionASTNode>(std::string(name_tok.value),
-                                           std::move(params), ret,
-                                           std::move(block_body));
+  return std::make_unique<FunctionASTNode>(
+      std::string(name_tok.value), std::move(params), std::move(r_types),
+      std::move(block_body));
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
@@ -1238,6 +1498,62 @@ Parser::parse_return_statement() {
   return std::make_unique<ReturnASTNode>(std::move(return_vals));
 }
 
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_namespace_statement() {
+  advance();
+  auto name_tok =
+      consume_token(TokenType::IDENTIFIER, "Expected a namespace name");
+  if (!name_tok)
+    return std::unexpected(name_tok.error());
+
+  auto body_res = parse_block();
+  if (!body_res)
+    return std::unexpected(body_res.error());
+
+  std::unique_ptr<BlockASTNode> block_ptr = std::unique_ptr<BlockASTNode>(
+      static_cast<BlockASTNode *>(std::move(body_res.value()).release()));
+  return std::make_unique<NamespaceASTNode>(std::string(name_tok->value),
+                                            std::move(block_ptr));
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError>
+Parser::parse_for_statement() {
+  Token op_tok;
+  advance();
+
+  bool has_paren = check(TokenType::L_PAREN);
+  if (has_paren) {
+    op_tok = peek();
+    advance();
+  }
+
+  std::vector<LoopConditionASTNode> conditions;
+  if (!parser_for_condition_group(conditions)) {
+    synchronize();
+    return std::unexpected(ParseError::MalformedLoopCondition);
+  }
+
+  if (conditions.empty()) {
+    report_error(peek(), "For loop is missing a valid condition or range.");
+    return std::unexpected(ParseError::InvalidLoop);
+  }
+
+  if (has_paren)
+    if (!consume(TokenType::R_PAREN,
+                 std::format("Paranthesized expression opened at "
+                             "Line {}, Column {} is missing closing')'",
+                             op_tok.line, op_tok.column)))
+      return std::unexpected(ParseError::MissingClosingParen);
+
+  auto for_body = parse_block();
+
+  if (!for_body)
+    return std::unexpected(for_body.error());
+
+  return std::make_unique<ForLoopASTNode>(
+      std::make_unique<LoopConditionASTNode>(std::move(conditions[0])),
+      std::move(for_body.value()));
+}
 std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
   // #import <...>
   if (check(TokenType::HASH) && peek_next().type == TokenType::IMPORT) {
@@ -1248,7 +1564,7 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
 #pragma GCC diagnostic ignored "-Wswitch"
   switch (peek().type) {
   case TokenType::LET: {
-    auto decl = parse_variable_declaration();
+    auto decl = parse_variable_declaration(true, true);
     if (!decl)
       return std::unexpected(decl.error());
     return std::move(decl.value());
@@ -1256,11 +1572,16 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
   case TokenType::IF:
     return parse_if_statement();
 
+  case TokenType::FOR:
+    return parse_for_statement();
+
   case TokenType::FUNCTION:
     return parse_function_statement();
 
   case TokenType::RETURN:
     return parse_return_statement();
+  case TokenType::NAMESPACE:
+    return parse_namespace_statement();
   }
 #pragma GCC diagnostic pop
 
@@ -1268,6 +1589,19 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
 
   if (!expr)
     return std::unexpected(ParseError::UnexpectedToken);
+
+  auto *node_ptr = expr.value().get();
+
+  if (dynamic_cast<VariableExprASTNode *>(node_ptr)) {
+    report_error(peek(), "Syntax Error: Expression statement has no effect. "
+                         "Bare variable references are not allowed here.");
+    return std::unexpected(ParseError::InvalidStatement);
+  }
+  if (dynamic_cast<LiteralASTNode *>(node_ptr)) {
+    report_error(peek(), "Syntax Error: Expression statement has no effect. "
+                         "Bare constants are not allowed here.");
+    return std::unexpected(ParseError::InvalidStatement);
+  }
 
   if (!check(TokenType::SEMI_COLON)) {
     report_error(peek(), "Expected ';' at the end of variable declaration");
