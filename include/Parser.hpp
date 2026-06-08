@@ -35,11 +35,14 @@ enum class ParseError {
   MalformedParameters,
   MalformedRangeLiteral,
   MalformedMemberAccess,
+  MalformedLoopCondition,
   InvalidImportPath,
   InvalidExpression,
   InvalidDeclarationTarget,
   InvalidCallTarget,
   InvalidType,
+  InvalidLoop,
+  InvalidStatement,
   AssignmentCountMismatch,
   InvalidAssignmentTarget,
   InvalidArrayMalformed,
@@ -67,6 +70,11 @@ struct Parser {
     bool fatal_on_assign = false;
 
     char pad[6]{};
+  };
+
+  struct LoopOptsASTNode {
+    bool allow_C_style = false;
+    bool allow_Loop_Range_style = false;
   };
 
   std::vector<Token> tokens;
@@ -108,21 +116,27 @@ struct Parser {
   bool parse_parameter_list(std::vector<ParameterASTNode> &params,
                             const ParameterOptsASTNode &opts,
                             TokenType term_type);
+
+  bool parse_loopParam_list(const LoopOptsASTNode &cond,
+                            std::vector<LoopConditionASTNode> &c_block);
+  bool parser_for_variable_group(std::vector<ParameterASTNode> &params);
   bool parser_function_parameter_group(std::vector<ParameterASTNode> &params);
   bool parser_variable_parameter_group(std::vector<ParameterASTNode> &params);
+  bool parser_for_condition_group(std::vector<LoopConditionASTNode> &params);
   bool is_statement_start(TokenType type);
   ParserRule get_rule(TokenType type);
   void report_error(const Token &tok, std::string_view msg);
   void synchronize();
 
-  TypeSpecifier parse_type();
+  std::expected<TypeSpecifier, ParseError> parse_type();
   std::vector<std::unique_ptr<ASTNode>> parse_program();
   std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_variable_declaration();
+  parse_variable_declaration(bool let_allowed, bool semi_allowed);
   std::expected<std::unique_ptr<ASTNode>, ParseError>
   parse_assignment(std::unique_ptr<ASTNode> left);
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_array_literal();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_range_literal();
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_range_infix(std::unique_ptr<ASTNode> left);
   std::expected<std::unique_ptr<ASTNode>, ParseError>
   parse_expression(Precedence min_precedence);
 
@@ -146,9 +160,14 @@ struct Parser {
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_paren_expression();
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_body();
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_for_statement();
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_return_statement();
   std::expected<std::unique_ptr<ASTNode>, ParseError>
   parse_function_statement();
+
+  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  parse_namespace_statement();
+  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_switch_statement();
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_statement();
   std::expected<std::unique_ptr<ASTNode>, ParseError> parse_primary();
 };
