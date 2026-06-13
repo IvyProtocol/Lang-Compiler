@@ -3,87 +3,295 @@
 
 ASTNode::~ASTNode() = default;
 
-LiteralASTNode::LiteralASTNode(std::string_view val) : value(std::move(val)) {}
+LiteralASTNode::LiteralASTNode(const std::string_view val) : value(val) {}
 
-VariableExprASTNode::VariableExprASTNode(std::string_view n) : name(n) {}
+std::unique_ptr<ASTNode> LiteralASTNode::clone() const {
+  return std::make_unique<LiteralASTNode>(value);
+}
+
+VariableExprASTNode::VariableExprASTNode(const std::string_view n) : name(n) {}
+
+std::unique_ptr<ASTNode> VariableExprASTNode::clone() const {
+  return std::make_unique<VariableExprASTNode>(name);
+}
 
 VarDeclASTNode::VarDeclASTNode(std::vector<ParameterASTNode> params,
                                std::vector<std::unique_ptr<ASTNode>> i)
     : parameters(std::move(params)), initializers(std::move(i)) {}
 
-AssignmentASTNode::AssignmentASTNode(std::unique_ptr<ASTNode> lhs, Token op_tok,
+std::unique_ptr<ASTNode> VarDeclASTNode::clone() const {
+  std::vector<ParameterASTNode> cloned_params;
+  cloned_params.reserve(parameters.size());
+  for (const auto &params : parameters) {
+    std::unique_ptr<ParameterASTNode> p(
+        dynamic_cast<ParameterASTNode *>(params.clone().release()));
+    cloned_params.emplace_back(std::move(*p));
+  }
+
+  std::vector<std::unique_ptr<ASTNode>> cloned_inits;
+  cloned_inits.reserve(initializers.size());
+
+  for (const auto &init : initializers)
+    cloned_inits.emplace_back(init ? init->clone() : nullptr);
+
+  return std::make_unique<VarDeclASTNode>(std::move(cloned_params),
+                                          std::move(cloned_inits));
+}
+
+AssignmentASTNode::AssignmentASTNode(std::unique_ptr<ASTNode> lhs, Token const& op_tok,
                                      std::unique_ptr<ASTNode> val)
     : left_side(std::move(lhs)), op(op_tok), new_value(std::move(val)) {}
 
-CallASTNode::CallASTNode(std::string_view name,
+std::unique_ptr<ASTNode> AssignmentASTNode::clone() const {
+  return std::make_unique<AssignmentASTNode>(
+      left_side ? left_side->clone() : nullptr, op,
+      new_value ? new_value->clone() : nullptr);
+}
+
+CallASTNode::CallASTNode(const std::string_view name,
                          std::vector<std::unique_ptr<ASTNode>> args)
     : call(name), arguments(std::move(args)) {}
 
-IndexASTNode::IndexASTNode(std::unique_ptr<ASTNode> arr, Token op_tok,
+std::unique_ptr<ASTNode> CallASTNode::clone() const {
+  std::vector<std::unique_ptr<ASTNode>> cloned_args;
+  cloned_args.reserve(arguments.size());
+  for (const auto &arg : arguments) {
+    cloned_args.emplace_back(arg ? arg->clone() : nullptr);
+  }
+  return std::make_unique<CallASTNode>(call, std::move(cloned_args));
+}
+
+IndexASTNode::IndexASTNode(std::unique_ptr<ASTNode> arr, Token const& op_tok,
                            std::unique_ptr<ASTNode> idx)
     : arr_expr(std::move(arr)), op(op_tok), iexpr(std::move(idx)) {}
+
+std::unique_ptr<ASTNode> IndexASTNode::clone() const {
+  return std::make_unique<IndexASTNode>(arr_expr ? arr_expr->clone() : nullptr,
+                                        op, iexpr ? iexpr->clone() : nullptr);
+}
 
 ArrayLiteralASTNode::ArrayLiteralASTNode(
     std::vector<std::unique_ptr<ASTNode>> elems)
     : elements(std::move(elems)) {}
 
-RangeLiteralASTNode::RangeLiteralASTNode(std::unique_ptr<ASTNode> st_node,
-                                         Token opTok,
-                                         std::unique_ptr<ASTNode> en_node)
-    : start(std::move(st_node)), op(opTok), end(std::move(en_node)) {}
+std::unique_ptr<ASTNode> ArrayLiteralASTNode::clone() const {
+  std::vector<std::unique_ptr<ASTNode>> cloned_elems;
+  cloned_elems.reserve(elements.size());
+  for (const auto &elem : elements) {
+    cloned_elems.emplace_back(elem ? elem->clone() : nullptr);
+  }
+  return std::make_unique<ArrayLiteralASTNode>(std::move(cloned_elems));
+}
 
-BinaryExprASTNode::BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token o,
+RangeLiteralASTNode::RangeLiteralASTNode(std::unique_ptr<ASTNode> start_node,
+                                         Token const& opTok,
+                                         std::unique_ptr<ASTNode> end_node)
+    : start(std::move(start_node)), op(opTok), end(std::move(end_node)) {}
+
+std::unique_ptr<ASTNode> RangeLiteralASTNode::clone() const {
+  return std::make_unique<RangeLiteralASTNode>(
+      start ? start->clone() : nullptr, op, end ? end->clone() : nullptr);
+}
+
+BinaryExprASTNode::BinaryExprASTNode(std::unique_ptr<ASTNode> l, Token const& o,
                                      std::unique_ptr<ASTNode> r)
     : left(std::move(l)), op(o), right(std::move(r)) {}
 
-UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token o,
+std::unique_ptr<ASTNode> BinaryExprASTNode::clone() const {
+  return std::make_unique<BinaryExprASTNode>(left ? left->clone() : nullptr, op,
+                                             right ? right->clone() : nullptr);
+}
+
+UnaryExprASTNode::UnaryExprASTNode(std::unique_ptr<ASTNode> opnd, Token const& o,
                                    bool postfix)
     : operand(std::move(opnd)), op(o), is_postfix(postfix) {}
+
+std::unique_ptr<ASTNode> UnaryExprASTNode::clone() const {
+  return std::make_unique<UnaryExprASTNode>(
+      operand ? operand->clone() : nullptr, op, is_postfix);
+}
 
 BlockASTNode::BlockASTNode(std::vector<std::unique_ptr<ASTNode>> stmts)
     : statements(std::move(stmts)) {}
 
+std::unique_ptr<ASTNode> BlockASTNode::clone() const {
+  std::vector<std::unique_ptr<ASTNode>> cloned_stmts;
+  cloned_stmts.reserve(statements.size());
+  for (const auto &stmt : statements) {
+    cloned_stmts.emplace_back(stmt ? stmt->clone() : nullptr);
+  }
+  return std::make_unique<BlockASTNode>(std::move(cloned_stmts));
+}
+
 ImportASTNode::ImportASTNode(std::vector<std::string> path)
     : mod_path(std::move(path)) {}
 
+std::unique_ptr<ASTNode> ImportASTNode::clone() const {
+  return std::make_unique<ImportASTNode>(mod_path);
+}
+
+
+IfBranch::IfBranch(std::unique_ptr<ASTNode> init, std::unique_ptr<ASTNode>  cond, std::unique_ptr<ASTNode> b)
+  : initializer(std::move(init)), condition(std::move(cond)), body(std::move(b)) {}
+
+IfBranch IfBranch::clone() const
+{
+  return {
+    initializer ? initializer->clone() : nullptr,
+    condition ? condition->clone() : nullptr,
+    body ? body->clone() : nullptr
+  };
+}
+
 IfASTNode::IfASTNode(
-    std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
+    std::vector<IfBranch>
         brs,
     std::unique_ptr<ASTNode> el_br)
     : branches(std::move(brs)), else_branch(std::move(el_br)) {}
 
-ParameterASTNode::ParameterASTNode(std::unique_ptr<ASTNode> ne,
-                                   TypeSpecifier ty,
-                                   std::unique_ptr<RangeLiteralASTNode> rl,
-                                   std::unique_ptr<ASTNode> vl)
-    : node(std::move(ne)), type(std::move(ty)), defaultValue(std::move(vl)),
-      range(std::move(rl)) {}
+std::unique_ptr<ASTNode> IfASTNode::clone() const {
+  std::vector<IfBranch> cloned_branches;
+  cloned_branches.reserve(branches.size());
+  for (const auto &branch : branches) {
+    cloned_branches.emplace_back(branch.clone());
+  }
+  return std::make_unique<IfASTNode>(
+      std::move(cloned_branches), else_branch ? else_branch->clone() : nullptr);
+}
 
-FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> p,
+ParameterASTNode::ParameterASTNode(std::unique_ptr<ASTNode> n,
+                                   TypeSpecifier t,
+                                   std::unique_ptr<RangeLiteralASTNode> r,
+                                   std::unique_ptr<ASTNode> v)
+    : node(std::move(n)), type(std::move(t)), defaultValue(std::move(v)),
+      range(std::move(r)) {}
+
+std::unique_ptr<ASTNode> ParameterASTNode::clone() const {
+  std::unique_ptr<RangeLiteralASTNode> cloned_range = nullptr;
+  if (range) {
+    cloned_range.reset(
+        dynamic_cast<RangeLiteralASTNode *>(range->clone().release()));
+  }
+  return std::make_unique<ParameterASTNode>(
+      node ? node->clone() : nullptr, type.clone(), std::move(cloned_range),
+      defaultValue ? defaultValue->clone() : nullptr);
+}
+
+FunctionASTNode::FunctionASTNode(std::string n, std::vector<ParameterASTNode> params,
                                  std::vector<TypeSpecifier> ret,
                                  std::unique_ptr<BlockASTNode> b)
-    : name(std::move(n)), parameters(std::move(p)), return_type(std::move(ret)),
+    : name(std::move(n)), parameters(std::move(params)), return_type(std::move(ret)),
       body(std::move(b)) {}
 
+std::unique_ptr<ASTNode> FunctionASTNode::clone() const {
+  std::vector<ParameterASTNode> cloned_params;
+  cloned_params.reserve(parameters.size());
+  for (const auto &param : parameters) {
+    // 1. Clone returns a unique_ptr.
+    // 2. Dereference it (*) to get the raw object value for the vector.
+    auto cloned_param_ptr = param.clone();
+    if (cloned_param_ptr) {
+      // Cast if clone() returns unique_ptr<ASTNode> instead of
+      // unique_ptr<ParameterASTNode>
+      auto *raw_param = dynamic_cast<ParameterASTNode *>(cloned_param_ptr.get());
+      cloned_params.emplace_back(std::move(*raw_param));
+    }
+  }
+
+  std::vector<TypeSpecifier> cloned_ret;
+  cloned_ret.reserve(return_type.size());
+  for (const auto &ret : return_type) {
+    cloned_ret.emplace_back(ret.clone());
+  }
+
+  std::unique_ptr<BlockASTNode> cloned_body = nullptr;
+  if (body) {
+    cloned_body.reset(dynamic_cast<BlockASTNode *>(body->clone().release()));
+  }
+
+  // Finish the return statement that was cut off
+  return std::make_unique<FunctionASTNode>(name, std::move(cloned_params),
+                                           std::move(cloned_ret),
+                                           std::move(cloned_body));
+}
+
 MemberAccessASTNode::MemberAccessASTNode(std::unique_ptr<ASTNode> lhs,
-                                         Token op_tok, Token member_tok)
+                                         Token const& op_tok, Token const& member_tok)
     : left_side(std::move(lhs)), op(op_tok), member(member_tok) {}
+
+std::unique_ptr<ASTNode> MemberAccessASTNode::clone() const {
+  return std::make_unique<MemberAccessASTNode>(
+      left_side ? left_side->clone() : nullptr, op, member);
+}
 
 ReturnASTNode::ReturnASTNode(std::vector<std::unique_ptr<ASTNode>> expr)
     : expression(std::move(expr)) {}
 
+std::unique_ptr<ASTNode> ReturnASTNode::clone() const {
+  std::vector<std::unique_ptr<ASTNode>> cloned_exprs;
+  cloned_exprs.reserve(expression.size());
+  for (const auto &expr : expression) {
+    cloned_exprs.emplace_back(expr ? expr->clone() : nullptr);
+  }
+  return std::make_unique<ReturnASTNode>(std::move(cloned_exprs));
+}
+
+JoinASTNode::JoinASTNode(std::vector<std::unique_ptr<ASTNode>> expr)
+    : expression(std::move(expr)) {}
+
+std::unique_ptr<ASTNode> JoinASTNode::clone() const {
+  std::vector<std::unique_ptr<ASTNode>> cloned_exprs;
+  cloned_exprs.reserve(expression.size());
+  for (const auto &expr : expression) {
+    cloned_exprs.emplace_back(expr ? expr->clone() : nullptr);
+  }
+  return std::make_unique<JoinASTNode>(std::move(cloned_exprs));
+}
+
 NamespaceASTNode::NamespaceASTNode(std::string p,
                                    std::unique_ptr<BlockASTNode> b)
     : parent(std::move(p)), body(std::move(b)) {}
+
+std::unique_ptr<ASTNode> NamespaceASTNode::clone() const {
+  std::unique_ptr<BlockASTNode> cloned_body = nullptr;
+  if (body) {
+    cloned_body.reset(dynamic_cast<BlockASTNode *>(body->clone().release()));
+  }
+  return std::make_unique<NamespaceASTNode>(parent, std::move(cloned_body));
+}
+
+NamespaceAliasASTNode::NamespaceAliasASTNode(std::string alias, std::string target)
+    : alias_name(std::move(alias)), target_name(std::move(target)) {}
+
+std::unique_ptr<ASTNode> NamespaceAliasASTNode::clone() const {
+  return std::make_unique<NamespaceAliasASTNode>(alias_name, target_name);
+}
 
 LoopConditionASTNode::LoopConditionASTNode(std::unique_ptr<ASTNode> i,
                                            std::unique_ptr<ASTNode> c,
                                            std::unique_ptr<ASTNode> p)
     : initialize(std::move(i)), condition(std::move(c)), prefix(std::move(p)) {}
 
+std::unique_ptr<ASTNode> LoopConditionASTNode::clone() const {
+  return std::make_unique<LoopConditionASTNode>(
+      initialize ? initialize->clone() : nullptr,
+      condition ? condition->clone() : nullptr,
+      prefix ? prefix->clone() : nullptr);
+}
+
 ForLoopASTNode::ForLoopASTNode(std::unique_ptr<LoopConditionASTNode> c,
                                std::unique_ptr<ASTNode> b)
     : condition(std::move(c)), block(std::move(b)) {}
+
+std::unique_ptr<ASTNode> ForLoopASTNode::clone() const {
+  std::unique_ptr<LoopConditionASTNode> cloned_cond = nullptr;
+  if (condition) {
+    cloned_cond.reset(
+        dynamic_cast<LoopConditionASTNode *>(condition->clone().release()));
+  }
+  return std::make_unique<ForLoopASTNode>(std::move(cloned_cond),
+                                          block ? block->clone() : nullptr);
+}
 
 // ─── Internal logging helpers
 // ───────────────────────────────────────────────── Centralised here so every
@@ -110,7 +318,7 @@ void VarDeclASTNode::debug_print(const std::string &prefix) const {
 
   // Scenario 1: Clean Parallel Mapping (e.g., let int: x, y := 1, 2;)
   if (parameters.size() == initializers.size()) {
-    size_t total_elements = parameters.size() * 2;
+    const size_t total_elements = parameters.size() * 2;
     size_t current_element = 0;
 
     for (size_t i = 0; i < parameters.size(); ++i) {
@@ -120,7 +328,7 @@ void VarDeclASTNode::debug_print(const std::string &prefix) const {
       current_element++;
 
       // B. Print Associated Value
-      bool val_is_last = (current_element == total_elements - 1);
+      const bool val_is_last = (current_element == total_elements - 1);
       std::string val_branch = val_is_last ? "└── Value:  " : "├── Value:  ";
       std::print("{}{}", prefix, val_branch);
 
@@ -136,25 +344,25 @@ void VarDeclASTNode::debug_print(const std::string &prefix) const {
   // Scenario 2: Tuple Unpacking or Cardinality Mismatch (e.g., let int: x, y :=
   // get_pair();)
   else {
-    size_t total_elements = parameters.size() + initializers.size();
+    const size_t total_elements = parameters.size() + initializers.size();
     size_t current_element = 0;
 
     // Print all variable targets first
-    for (size_t i = 0; i < parameters.size(); ++i) {
+    for (const auto & parameter : parameters) {
       std::print("{}├── Target: ", prefix);
-      parameters[i].debug_print(prefix + "│   ");
+      parameter.debug_print(prefix + "│   ");
       current_element++;
     }
 
     // Print the remaining initializer expression block (e.g., the tuple object)
-    for (size_t i = 0; i < initializers.size(); ++i) {
-      bool is_last = (current_element == total_elements - 1);
+    for (const auto & initializer : initializers) {
+      const bool is_last = (current_element == total_elements - 1);
       std::string branch = is_last ? "└── Source: " : "├── Source: ";
       std::print("{}{}", prefix, branch);
 
       std::string next_prefix = prefix + (is_last ? "    " : "│   ");
-      if (initializers[i]) {
-        initializers[i]->debug_print(next_prefix);
+      if (initializer) {
+        initializer->debug_print(next_prefix);
       } else {
         std::println("[Null Initializer]");
       }
@@ -267,12 +475,16 @@ void IfASTNode::debug_print(const std::string &prefix) const {
     const bool last_branch = (i == branches.size() - 1 && !else_branch);
     std::println("{}{}Branch {}", prefix, last_branch ? "└── " : "├── ", i);
 
+    std::print("{}    ├── Init: ", prefix);
+    branches[i].initializer ? branches[i].initializer->debug_print(prefix + "    │   ")
+                      : std::println("[No initialization]");
+
     std::print("{}    ├── Cond: ", prefix);
-    branches[i].first ? branches[i].first->debug_print(prefix + "    │   ")
+    branches[i].condition ? branches[i].condition->debug_print(prefix + "    │   ")
                       : std::println("[Invalid Condition]");
 
     std::print("{}    └── Body: ", prefix);
-    branches[i].second ? branches[i].second->debug_print(prefix + "        ")
+    branches[i].body ? branches[i].body->debug_print(prefix + "        ")
                        : std::println("[Invalid Body]");
   }
 
@@ -299,7 +511,7 @@ void ParameterASTNode::debug_print(const std::string &prefix) const {
     std::println("{}├── Size: [none]", prefix);
   }
 
-  bool has_range = (range != nullptr);
+  const bool has_range = (range != nullptr);
   std::string default_branch = has_range ? "├──" : "└──";
 
   std::print("{}{} Default: ", prefix, default_branch);
@@ -336,8 +548,8 @@ void FunctionASTNode::debug_print(const std::string &prefix) const {
   }
 
   std::println("{}├── Returns: {}", prefix, r_str);
-  bool has_body = (body != nullptr);
-  size_t total_ch = parameters.size() + (has_body ? 1 : 0);
+  const bool has_body = (body != nullptr);
+  const size_t total_ch = parameters.size() + (has_body ? 1 : 0);
 
   for (size_t i{}; i < parameters.size(); ++i) {
     const bool last = (i == total_ch - 1);
@@ -378,6 +590,21 @@ void ReturnASTNode::debug_print(const std::string &prefix) const {
   }
 }
 
+void JoinASTNode::debug_print(const std::string &prefix) const {
+  std::println("[Join]");
+
+  for (size_t i{}; i < expression.size(); ++i) {
+    const bool last = (i == expression.size() - 1);
+    std::print("{}{}", prefix, last ? "└── " : "├── ");
+
+    if (expression[i]) {
+      expression[i]->debug_print(prefix + (last ? "    " : "│   "));
+    } else {
+      std::println("[null]");
+    }
+  }
+}
+
 void NamespaceASTNode::debug_print(const std::string &prefix) const {
   std::println("[Namespace]");
   std::print("{}└──", prefix);
@@ -386,6 +613,12 @@ void NamespaceASTNode::debug_print(const std::string &prefix) const {
     body->debug_print(prefix + "    ");
   else
     std::println("[null]");
+}
+
+void NamespaceAliasASTNode::debug_print(const std::string& prefix) const {
+  std::println("[Namespace-Alias]");
+  std::println("{}├── Alias: {}", prefix, alias_name);
+  std::println("{}└── Target: {}", prefix, target_name);
 }
 
 void LoopConditionASTNode::debug_print(const std::string &indent) const {
