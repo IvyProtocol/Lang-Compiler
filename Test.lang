@@ -83,3 +83,90 @@ if ( var > type() ) {
     ++i;
   }
 }
+
+function name(int: x, y, str: z, lim ... 20) -> int: {}
+let int: x := y, y := z, z := x;
+x := y;
+
+let int: x, y, z := 1;
+
+// This needs to be fixed.
+let int: x, y, z := 1, 2;
+
+function name(int: x, int: y, int: z) -> int: {}
+function name(int[]: x, y, z, str: x, y, z) -> int: {}
+
+
+let i32: i := 1;
+let i32: im := 2;
+let i32: sms := 3;
+let i32: sms := 4;
+
+let i32: x := 1, y := 2, z := 3;
+Parser::parse("hello world");
+
+function name(i32[]: name) -> (i32, i32): {
+
+}
+
+let i32[2]: i := [1, 2];
+let i32[]: i := [1, 2];
+
+let i32[2]: i, i64[4]: l := 1, 2;
+
+for i32: i in Filesystem::Glob() { }
+
+for (i32: i in Filesystem::Glob() ) {}
+
+
+for (i32: i in ( i < 10 ) ) { }
+
+for i32: i in ( i < 10 ) {} 
+
+for (i32: i := 0; i < 10; i++ ) {}
+
+for i32: i := 0; i < 10; i++ {}
+
+for i32: i in (1...4) {}
+for (i32: i in (1...4)) {}
+
+var := x + (x + 1));
+
+#import <Print::Println>
+
+namespace Math {
+  function Add(i32: a, b) -> i32: {
+    return(a + b);
+  }
+
+  function Mul(i32: a, b) -> i32: {
+    return a * b;
+  }
+}
+
+function is_prime(int: num) -> int: {
+  for ( int: i := 1; i < 10; i += 2 ) {
+    if (( num % i ) == 0) return False;
+  }
+  return(True);
+}
+
+function main() -> int: {
+  Println( Math::Add(3, Math::Mul(2, 5)) );
+  return 0;
+}
+
+if (i32: i := 0; i < 10) {
+
+} // This works
+
+if i32: i := 0; i < 10 {} // Same works...
+
+if i32: i := 0; i < 10 return 1; // THIS DOES NOT WORK.. It doesn't know where it ended. 
+if (i32: i := 0; i < 10) return 1; // It now knows. 
+
+if i32: i := 0; i < 10 { return 1; } // This works.
+
+if (i := 0; i < 10) { return 1; } // This doesn't work, i is consumed as a type..
+
+namespace name := tok;
