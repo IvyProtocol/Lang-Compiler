@@ -10,13 +10,13 @@ Parser::Parser(std::vector<Token> tokens_list, std::string_view file_path,
 
 const Token &Parser::peek() const {
   if (is_at_end()) {
-    static const Token eof_token{TokenType::END_OF_FILE, "EOF", 0, 0};
+    static constexpr Token eof_token{TokenType::END_OF_FILE, "EOF", 0, 0};
     return eof_token;
   }
   return tokens[current];
 }
 
-std::expected<Token, ParseError> Parser::consume_token(TokenType type,
+std::expected<Token, ParseError> Parser::consume_token(const TokenType type,
                                                        std::string_view msg) {
   if (check(type))
     return advance();
@@ -27,7 +27,7 @@ std::expected<Token, ParseError> Parser::consume_token(TokenType type,
 }
 
 // For when I need to verify a symbol ( e.g.. '(', '->') Yeah, no. I can't type.
-bool Parser::consume(TokenType type, std::string_view msg) {
+bool Parser::consume(const TokenType type, std::string_view msg) {
   if (check(type)) {
     advance();
     return true;
@@ -38,7 +38,7 @@ bool Parser::consume(TokenType type, std::string_view msg) {
   return false;
 }
 
-bool Parser::is_statement_start(TokenType type) {
+bool Parser::is_statement_start(const TokenType type) {
   switch (type) {
   case TokenType::IMPORT:
   case TokenType::FUNCTION:
@@ -132,6 +132,18 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
       return false;
 
     TypeSpecifier group_type = std::move(type_res.value());
+
+    if (group_type.base_types == "void") {
+      if (opts.allow_void_assignment == false) {
+        report_error(
+            peek(),
+            std::format(
+                "'void' is not a valid constructor field or a TypeSpecifier. "
+                "'void' is logically valid only as a single state to indicate "
+                "no return value from the caller."));
+        return false;
+      }
+    }
 
     // If a colon is missing, it would call synchronize() globally and discard
     // the block.
@@ -235,8 +247,18 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
             std::move(range_start), op_tok, std::move(end_node));
       }
 
-      params.emplace_back(std::move(param_target), std::move(group_type),
-                          std::move(param_range), std::move(default_value));
+      TypeSpecifier current_param_type;
+
+      current_param_type.base_types = group_type.base_types;
+      current_param_type.is_const = group_type.is_const;
+      current_param_type.is_array = group_type.is_array;
+
+      if (group_type.arr_size)
+        current_param_type.arr_size = group_type.arr_size->clone();
+
+      params.emplace_back(std::move(param_target),
+                          std::move(current_param_type), std::move(param_range),
+                          std::move(default_value));
 
       // Passive exit, if assignments are not parsed inline here. Stop
       // collecting names immediately so VarDecl can handle the token
@@ -312,8 +334,7 @@ bool Parser::parse_loopParam_list(const LoopOptsASTNode &cond,
         if (!for_prefix)
           return false;
 
-        auto *node = for_prefix.value().get();
-        if (!dynamic_cast<AssignmentASTNode *>(node) &&
+        if (auto *node = for_prefix.value().get(); !dynamic_cast<AssignmentASTNode *>(node) &&
             !dynamic_cast<UnaryExprASTNode *>(node)) {
           report_error(peek(), "For-loop increament must be an assignment or "
                                "unary expression (e.g. i += 2, i++)");
@@ -366,7 +387,7 @@ bool Parser::parse_loopParam_list(const LoopOptsASTNode &cond,
 
       Token op_tok;
 
-      bool has_paren = check(TokenType::L_PAREN);
+      const bool has_paren = check(TokenType::L_PAREN);
       if (has_paren) {
         op_tok = peek();
         advance();
@@ -400,7 +421,7 @@ bool Parser::parser_for_variable_group(std::vector<ParameterASTNode> &params) {
   opts.allow_assignment = false;
   opts.allow_ranges = false;
   opts.fatal_on_assign = false;
-
+  opts.allow_void_assignment = false;
   return parse_parameter_list(params, opts, TokenType::IN);
 }
 
@@ -410,16 +431,8 @@ bool Parser::parser_function_parameter_group(
   opts.allow_assignment = false;
   opts.allow_ranges = true;
   opts.fatal_on_assign = true;
+  opts.allow_void_assignment = true;
   return parse_parameter_list(params, opts, TokenType::R_PAREN);
-}
-
-bool Parser::parser_variable_parameter_group(
-    std::vector<ParameterASTNode> &params) {
-  ParameterOptsASTNode opts;
-  opts.allow_assignment = false;
-  opts.allow_ranges = false;
-  opts.fatal_on_assign = false;
-  return parse_parameter_list(params, opts, TokenType::SEMI_COLON);
 }
 
 bool Parser::parser_for_condition_group(
@@ -443,6 +456,16 @@ bool Parser::parser_for_condition_group(
   opts.allow_C_style = !is_range;
 
   return parse_loopParam_list(opts, params);
+}
+
+bool Parser::parser_variable_parameter_group(
+    std::vector<ParameterASTNode> &params) {
+  ParameterOptsASTNode opts;
+  opts.allow_assignment = false;
+  opts.allow_ranges = false;
+  opts.fatal_on_assign = false;
+  opts.allow_void_assignment = false;
+  return parse_parameter_list(params, opts, TokenType::SEMI_COLON);
 }
 
 void Parser::synchronize() {
@@ -530,7 +553,7 @@ void Parser::report_error(const Token &tok, std::string_view msg) {
   return out;
 }
 
-ParserRule Parser::get_rule(TokenType type) {
+ParserRule Parser::get_rule(const TokenType type) {
   switch (type) {
   case TokenType::INT_LITERAL:
   case TokenType::FLOAT_LITERAL:
@@ -662,7 +685,7 @@ std::expected<TypeSpecifier, ParseError> Parser::parse_type() {
   int paren_depth = 0;
 
   while (!is_at_end()) {
-    TokenType current_type = peek().type;
+    const TokenType current_type = peek().type;
 
     if (current_type == TokenType::SEMI_COLON)
       break;
@@ -756,8 +779,7 @@ std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
   std::vector<std::unique_ptr<ASTNode>> program_nodes;
 
   while (!is_at_end()) {
-    auto node = parse_statement();
-    if (node) {
+    if (auto node = parse_statement()) {
       program_nodes.emplace_back(std::move(node.value()));
     } else {
       synchronize();
@@ -781,19 +803,48 @@ Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
     return std::unexpected(ParseError::InvalidAssignmentTarget);
   }
 
-  Precedence right_precedence = static_cast<Precedence>(
+  constexpr auto right_precedence = static_cast<Precedence>(
       static_cast<std::int64_t>(Precedence::ASSIGNMENT) - 1);
 
   auto right_res = parse_expression(right_precedence);
   if (!right_res)
     return std::unexpected(right_res.error());
 
+  if (op.type == TokenType::PLUS_EQUAL || op.type == TokenType::MINUS_EQUAL ||
+      op.type == TokenType::MUL_EQUAL || op.type == TokenType::DIV_EQUAL) {
+    Token math_op = op;
+    if (op.type == TokenType::PLUS_EQUAL) {
+      math_op.type = TokenType::PLUS;
+      math_op.value = "+";
+    }
+    if (op.type == TokenType::MINUS_EQUAL) {
+      math_op.type = TokenType::MINUS;
+      math_op.value = "-";
+    }
+    if (op.type == TokenType::MUL_EQUAL) {
+      math_op.type = TokenType::MUL_EQUAL;
+      math_op.value = "*";
+    }
+    if (op.type == TokenType::DIV_EQUAL) {
+      math_op.type = TokenType::DIV_EQUAL;
+      math_op.value = "/";
+    }
+
+    auto binary_expr = std::make_unique<BinaryExprASTNode>(
+        left->clone(), math_op, std::move(right_res.value()));
+
+    Token ass_op = op;
+    ass_op.type = TokenType::ASSIGN;
+    ass_op.value = "=";
+    return std::make_unique<AssignmentASTNode>(std::move(left), ass_op,
+                                               std::move(binary_expr));
+  }
   return std::make_unique<AssignmentASTNode>(std::move(left), op,
                                              std::move(*right_res));
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
-Parser::parse_variable_declaration(bool let_allowed, bool semi_allowed) {
+Parser::parse_variable_declaration(const bool let_allowed, const bool semi_allowed) {
   Token let_token = peek();
   if (let_allowed)
     let_token = advance();
@@ -846,7 +897,8 @@ Parser::parse_variable_declaration(bool let_allowed, bool semi_allowed) {
     // The backend will see multiple targets but only one
     // source expression, signaling that it needs to perform a tuple unpack.
     if (all_vars.size() > 1 && initializers.size() == 1) {
-      // Left alone: Backend signals tuple unpack
+      while (initializers.size() < all_vars.size())
+        initializers.emplace_back(initializers[0]->clone());
     }
 
     // x, y := a, b, c (Truncation)
@@ -974,7 +1026,7 @@ Parser::parse_range_infix(std::unique_ptr<ASTNode> left) {
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
-Parser::parse_expression(Precedence min_prec) {
+Parser::parse_expression(Precedence min_precedence) {
   const Token token = advance();
   const ParserRule rule = get_rule(token.type);
 
@@ -995,10 +1047,9 @@ Parser::parse_expression(Precedence min_prec) {
 
   std::unique_ptr<ASTNode> left = std::move(left_res.value());
 
-  while (!is_at_end() && min_prec < get_rule(peek().type).precedence) {
+  while (!is_at_end() && min_precedence < get_rule(peek().type).precedence) {
     const Token next = advance();
-    const LedFunc led = get_rule(next.type).led;
-    if (led) {
+    if (const LedFunc led = get_rule(next.type).led) {
       auto led_res = (this->*led)(std::move(left));
       if (!led_res.has_value())
         return std::unexpected(led_res.error());
@@ -1037,7 +1088,7 @@ Parser::parse_postfix(std::unique_ptr<ASTNode> left) {
 std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_binary(std::unique_ptr<ASTNode> left) {
   const Token op = tokens[current - 1];
-  const Precedence next_prec = static_cast<Precedence>(
+  const auto next_prec = static_cast<Precedence>(
       static_cast<std::int64_t>(get_rule(op.type).precedence) + 1);
   auto right = parse_expression(next_prec);
 
@@ -1180,8 +1231,7 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_block() {
   std::vector<std::unique_ptr<ASTNode>> stmts;
 
   while (!is_at_end() && !check(TokenType::RBRACE)) {
-    auto stmt = parse_statement();
-    if (stmt)
+    if (auto stmt = parse_statement())
       stmts.emplace_back(std::move(stmt.value()));
     else
       synchronize();
@@ -1200,13 +1250,12 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_block() {
 
 std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_paren() {
   const Token op = peek();
-  if (!consume(TokenType::L_PAREN, std::format("Expected '(' line {}, but "
-                                               "missing '(' to open the scope.",
-                                               op.line)))
+
+  if (!consume(TokenType::L_PAREN, "Expected '('")) {
     return std::unexpected(ParseError::MissingOpeningParen);
+  }
 
   log_mov("Opening '('", op);
-
   auto node = parse_expression(Precedence::NONE);
 
   if (!node)
@@ -1269,83 +1318,191 @@ Parser::parse_paren_expression() {
   return std::move(result.value());
 }
 
-std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_if_body() {
+std::expected<Parser::ParsedIfHeader, ParseError> Parser::parse_if_header() {
+  const Token op = peek();
+
+  ParsedIfHeader header;
+  header.enforce_brace = true;
+  if (check(TokenType::L_PAREN))
+  {
+    if (!consume(TokenType::L_PAREN,
+      std::format("Expected '(' line {}, but "
+        "missing '(' to open the scope",
+        op.line)))
+      return std::unexpected(ParseError::MissingOpeningParen);
+    header.has_paren = true;
+    header.enforce_brace = false;
+  }
+
+  if (check(TokenType::LET))
+  {
+    report_error(peek(),
+             std::format("Invalid initialization target: Expected "
+                         "initialization of an identifier "
+                         "in the local scope. "
+                         "Found '{}' instead. '{}' is not allowed.",
+                         peek().value, peek().value));
+    return std::unexpected(ParseError::UnexpectedToken);
+  }
+
+  bool has_init {false};
+  size_t depth {};
+
+  for (size_t i = current; i < tokens.size(); i++)
+  {
+    const TokenType t = tokens[i].type;
+    if (t == TokenType::L_PAREN || t == TokenType::LBRACKET)
+      depth++;
+    else if (t == TokenType::R_PAREN || t == TokenType::RBRACKET)
+    {
+      if (depth == 0)
+        break;
+      depth--;
+    }
+    if (depth == 0)
+    {
+      if (t == TokenType::LBRACE || t == TokenType::END_OF_FILE)
+        break;
+
+      if (t == TokenType::COLON)
+        if (i + 1 < tokens.size() && is_statement_start(tokens[i + 1].type))
+          break;
+
+      if (t == TokenType::SEMI_COLON)
+      {
+        has_init = true;
+        break;
+      }
+    }
+  }
+
+  if (has_init)
+  {
+    auto init_res = parse_variable_declaration(false, true);
+    if (!init_res)
+      return std::unexpected(init_res.error());
+    header.initializer = std::move(init_res.value());
+  }
+
+  auto cond_res = parse_expression(Precedence::NONE);
+  if (!cond_res)
+    return std::unexpected(cond_res.error());
+  header.condition = std::move(cond_res.value());
+
+  if (header.has_paren)
+    if (!consume(TokenType::R_PAREN, "Parenthesized expression opened in if-statement is missing a closing ')' paren."))
+      return std::unexpected(ParseError::MissingClosingParen);
+
+  return header;
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_if_body(const ParsedIfHeader& header) {
   // Brace block — always takes precedence.
+  // If user didn't use parens.. They must use a '{'
+
+  /* Side line:
+   * While I am actively making this better. I regret how I have coded this language.
+   * I have made "Flexible Logics" and implemented them here and there.
+   * Which caused messy things.
+   * To be honest with those who will read this or maybe not?
+   * I regret it.
+   * That's what I have to say.
+   * I don't know If I can allow this:
+   * `let i32: x;
+   *  if ( x := 1; j < 10 ) { statement; }`
+   *
+   *  The "Flexible Logic" and "Smart" advancing token which automates themselves have limiting option..
+   *  If I try to make it optional here, then the entirity of code might fail.
+   *  Sigh, I am very disappointed with this.
+   */
+  if (header.enforce_brace)
+  {
+    if (!check(TokenType::LBRACE))
+    {
+      report_error(peek(), "Missing '{'. A block or colon is required when 'if' conditions are not wrapped in parentheses.");
+      return std::unexpected(ParseError::ExpectedBraceOrColon);
+    }
+  }
+
   if (check(TokenType::LBRACE))
     return parse_block();
 
-  // Optional `:` separator — consume it and fall through to a single
-  // statement or brace block on the next line.
-  if (check(TokenType::COLON)) {
-    advance();
+  // Enforce brace check!
+  // If we reach here, we have no braces and no colon.
+  // Did the header say we needed them!?
+  // Tch? I don't know, who would do this?
+  // Are you sane?
+  // Oh it is me who is not sane.
+  // Who the hell provides so much flexibility?
 
-    if (check(TokenType::LBRACE))
-      return parse_block();
-
-    auto stmt = parse_statement();
-
-    if (!stmt) {
-      report_error(peek(), "Expected a statement or block after ':'");
-      return std::unexpected(stmt.error());
-    }
-    return std::move(stmt.value());
+  if (header.has_paren == false)
+  {
+    report_error(peek(), "Condition must be wrapped with Parentheses to use single-line statement.");
+    return std::unexpected(ParseError::InvalidStatement);
   }
-
   // Inline single statement with no colon.
   auto stmt = parse_statement();
   if (!stmt) {
     report_error(peek(), "Expected a valid statement as the body of 'if'");
     return std::unexpected(stmt.error());
   }
-
   return std::move(stmt.value());
+
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_if_statement() {
   const Token if_tok = advance(); // consume 'if'
 
-  std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>>
-      branches;
-
+  std::vector<IfBranch> branches;
   std::unique_ptr<ASTNode> else_branch = nullptr;
   // if-branch
-  auto if_cond = parse_paren();
-
-  if (!if_cond) {
+  auto if_header = parse_if_header();
+  if (!if_header)
+  {
     report_error(if_tok, "'if' keyword must be followed by a "
-                         "condition in parantheses '()'.");
-    return std::unexpected(if_cond.error());
+                     "condition in parantheses '()'.");
+    return std::unexpected(if_header.error());
   }
 
-  auto if_body = parse_if_body();
+  auto if_body = parse_if_body(if_header.value());
   if (!if_body)
     return std::unexpected(
         if_body.error()); // Error already handled by body parser
 
-  branches.emplace_back(std::move(if_cond.value()), std::move(if_body.value()));
+  branches.emplace_back(
+    std::move(if_header.value().initializer),
+    std::move(if_header.value().condition),
+    std::move(if_body.value())
+  );
 
   while (check(TokenType::ELSEIF)) {
     advance(); // Consume 'else if'
 
-    auto ei_cond = parse_paren();
-    if (!ei_cond) {
+    auto ei_header = parse_if_header();
+    if (!ei_header) {
       report_error(peek(),
                    "'else if' requires a condition in parantheses '()'.");
-      return std::unexpected(ei_cond.error());
+      return std::unexpected(ei_header.error());
     }
-    auto ei_body = parse_if_body();
+
+    auto ei_body = parse_if_body(ei_header.value());
 
     if (!ei_body)
-      return std::unexpected(ei_cond.error());
+      return std::unexpected(ei_body.error());
 
-    branches.emplace_back(std::move(ei_cond.value()),
-                          std::move(ei_body.value()));
+    branches.emplace_back(
+      std::move(ei_header.value().initializer),
+      std::move(ei_header.value().condition),
+      std::move(ei_body.value())
+    );
   }
 
   if (check(TokenType::ELSE)) {
     advance(); // consume 'else'
-    auto else_body = parse_if_body();
+    auto else_body = parse_if_body({
+      .enforce_brace = true
+    });
 
     if (!else_body) {
       report_error(peek(), "'else' keyword must be followed by a "
@@ -1378,8 +1535,18 @@ Parser::parse_function_statement() {
 
   std::vector<ParameterASTNode> params;
 
-  if (check(TokenType::VOID))
+  if (check(TokenType::VOID)) {
     advance();
+    if (check(TokenType::COLON)) {
+      report_error(
+          peek(),
+          std::format(
+              "'void' is not a valid constructor field or a TypeSpecifier. "
+              "'void' is logically valid only as a single state to indicate "
+              "no return value from the caller."));
+      return std::unexpected(ParseError::InvalidType);
+    }
+  }
 
   else if (!check(TokenType::R_PAREN)) {
     if (!parser_function_parameter_group(params))
@@ -1445,15 +1612,14 @@ Parser::parse_function_statement() {
     return std::unexpected(body.error());
 
   std::unique_ptr<ASTNode> body_ptr = std::move(body.value());
-  auto *block_ptr = dynamic_cast<BlockASTNode *>(body_ptr.get());
 
-  if (!block_ptr) {
+  if (auto *block_ptr = dynamic_cast<BlockASTNode *>(body_ptr.get()); !block_ptr) {
     report_error(peek(), "Function body is not a block.");
     return std::unexpected(ParseError::InternalError);
   }
 
   auto block_body = std::unique_ptr<BlockASTNode>(
-      static_cast<BlockASTNode *>(body_ptr.release()));
+      dynamic_cast<BlockASTNode *>(body_ptr.release()));
 
   return std::make_unique<FunctionASTNode>(
       std::string(name_tok.value), std::move(params), std::move(r_types),
@@ -1469,10 +1635,8 @@ Parser::parse_return_statement() {
     advance();
 
     while (!check(TokenType::R_PAREN) && !is_at_end()) {
-      auto val = parse_expression(Precedence::NONE);
-
-      if (!val)
-        return std::unexpected(std::move(val.error()));
+      if (auto val = parse_expression(Precedence::NONE); !val)
+        return std::unexpected(val.error());
 
       if (check(TokenType::COMMA))
         advance();
@@ -1498,6 +1662,60 @@ Parser::parse_return_statement() {
   return std::make_unique<ReturnASTNode>(std::move(return_vals));
 }
 
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_join() {
+  advance();
+
+  std::vector<std::unique_ptr<ASTNode>> str_join;
+
+  if (!consume(
+          TokenType::L_PAREN,
+          "Paren initialization failed - Expected '(' to open a paren entry"))
+    return std::unexpected(ParseError::MissingOpeningParen);
+
+  if (check(TokenType::COMMA)) {
+    report_error(
+        peek(),
+        "Trailing comma after '(' is not allowed, required valid expressions.");
+    return std::unexpected(ParseError::UnexpectedToken);
+  }
+
+  if (check(TokenType::R_PAREN)) {
+    report_error(peek(), "Join initialization failed - join() requires at "
+                         "least two or more arguments");
+    return std::unexpected(ParseError::UnexpectedToken);
+  }
+
+  while (!check(TokenType::R_PAREN) && !is_at_end()) {
+    auto args = parse_expression(Precedence::NONE);
+    if (!args)
+      return std::unexpected(args.error());
+
+    str_join.emplace_back(std::move(args.value()));
+
+    if (check(TokenType::COMMA)) {
+      advance();
+
+      if (check(TokenType::R_PAREN)) {
+        report_error(peek(),
+                     "Found trailing comma is not allowed in join arguments");
+        return std::unexpected(ParseError::UnexpectedToken);
+      }
+    } else if (!check(TokenType::R_PAREN)) {
+      report_error(peek(), "Join initializaiton failed - Expected two or more "
+                           "arguments in join()");
+      return std::unexpected(ParseError::UnexpectedToken);
+    }
+  }
+
+  if (!consume(TokenType::R_PAREN, "Expected ')' after join list."))
+    return std::unexpected(ParseError::MissingClosingParen);
+
+  if (!consume(TokenType::SEMI_COLON, "Expected ';' after join."))
+    return std::unexpected(ParseError::MissingSemiColon);
+
+  return std::make_unique<JoinASTNode>(std::move(str_join));
+}
+
 std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_namespace_statement() {
   advance();
@@ -1506,12 +1724,31 @@ Parser::parse_namespace_statement() {
   if (!name_tok)
     return std::unexpected(name_tok.error());
 
+  if (check(TokenType::ASSIGN))
+  {
+    consume(TokenType::ASSIGN, "Couldn't consume ':='");
+
+    auto target_tok = consume_token(TokenType::IDENTIFIER, "Expected target namespace for alias");
+    if (!target_tok)
+      return std::unexpected(target_tok.error());
+
+    if (!consume(TokenType::SEMI_COLON, "Expected ';' after namespace alias"))
+      return std::unexpected(ParseError::MissingSemiColon);
+
+    return std::make_unique<NamespaceAliasASTNode>(std::string(name_tok->value), std::string(target_tok->value));
+  }
+
+  if (!check(TokenType::LBRACE)) {
+    report_error(peek(), "Expected '{' or ':=' after namespace name");
+    return std::unexpected(ParseError::UnexpectedToken);
+  }
+
   auto body_res = parse_block();
   if (!body_res)
     return std::unexpected(body_res.error());
 
-  std::unique_ptr<BlockASTNode> block_ptr = std::unique_ptr<BlockASTNode>(
-      static_cast<BlockASTNode *>(std::move(body_res.value()).release()));
+  auto block_ptr = std::unique_ptr<BlockASTNode>(
+      dynamic_cast<BlockASTNode *>(std::move(body_res.value()).release()));
   return std::make_unique<NamespaceASTNode>(std::string(name_tok->value),
                                             std::move(block_ptr));
 }
@@ -1521,7 +1758,7 @@ Parser::parse_for_statement() {
   Token op_tok;
   advance();
 
-  bool has_paren = check(TokenType::L_PAREN);
+  const bool has_paren = check(TokenType::L_PAREN);
   if (has_paren) {
     op_tok = peek();
     advance();
@@ -1582,6 +1819,8 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
     return parse_return_statement();
   case TokenType::NAMESPACE:
     return parse_namespace_statement();
+  case TokenType::JOIN:
+    return parse_join();
   }
 #pragma GCC diagnostic pop
 
