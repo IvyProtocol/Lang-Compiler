@@ -3,7 +3,8 @@
 #include "Logger.hpp"
 #include <tuple>
 
-Parser::Parser(std::vector<Token> tokens_list, std::string_view file_path,
+
+Parser::Parser(std::vector<Token> tokens_list, const std::string_view file_path,
                std::vector<std::string> lines)
     : tokens(std::move(tokens_list)), filename(file_path),
       source_lines(std::move(lines)) {}
@@ -38,7 +39,7 @@ bool Parser::consume(const TokenType type, std::string_view msg) {
   return false;
 }
 
-bool Parser::is_statement_start(const TokenType type) {
+constexpr bool Parser::is_statement_start(const TokenType type) {
   switch (type) {
   case TokenType::IMPORT:
   case TokenType::FUNCTION:
@@ -59,7 +60,6 @@ bool Parser::is_statement_start(const TokenType type) {
   case TokenType::JOIN:
   case TokenType::EVAL:
   case TokenType::NAMESPACE:
-  case TokenType::RBRACE:
     return true;
 
   case TokenType::OR:
@@ -77,6 +77,8 @@ bool Parser::is_statement_start(const TokenType type) {
   case TokenType::MINUS_EQUAL:
   case TokenType::MUL_EQUAL:
   case TokenType::DIV_EQUAL:
+  case TokenType::REG_MATCH:
+  case TokenType::MATCH_ADVANCE:
   case TokenType::L_S_O:
   case TokenType::R_S_O:
   case TokenType::LTE:
@@ -102,6 +104,7 @@ bool Parser::is_statement_start(const TokenType type) {
   case TokenType::L_PAREN:
   case TokenType::R_PAREN:
   case TokenType::LBRACE:
+  case TokenType::RBRACE:
   case TokenType::LBRACKET:
   case TokenType::RBRACKET:
   case TokenType::FLOAT_LITERAL:
@@ -111,7 +114,9 @@ bool Parser::is_statement_start(const TokenType type) {
   case TokenType::BACK_TICK_LITERAL:
   case TokenType::AUTO:
   case TokenType::CONST:
+  case TokenType::CONSTEXPR:
   case TokenType::VOID:
+  case TokenType::MUT:
   case TokenType::IDENTIFIER:
   case TokenType::END_OF_FILE:
     return false;
@@ -163,6 +168,11 @@ bool Parser::parse_parameter_list(std::vector<ParameterASTNode> &params,
     while (!is_at_end() && !check(term_type) && peek().type != TokenType::IN &&
            peek().value != "in") {
 
+      if (check(TokenType::AMPERSAND))
+        advance();
+
+      if (check(TokenType::MUT))
+        advance();
       // Manually check the identifier to bypass global synchronization traps.
       if (!check(TokenType::IDENTIFIER)) {
         report_error(
@@ -417,27 +427,29 @@ bool Parser::parse_loopParam_list(const LoopOptsASTNode &cond,
 }
 
 bool Parser::parser_for_variable_group(std::vector<ParameterASTNode> &params) {
-  ParameterOptsASTNode opts;
-  opts.allow_assignment = false;
-  opts.allow_ranges = false;
-  opts.fatal_on_assign = false;
-  opts.allow_void_assignment = false;
+  static constexpr ParameterOptsASTNode opts {
+    .allow_assignment = false,
+    .allow_ranges = false,
+    .fatal_on_assign = false,
+    .allow_void_assignment = false,
+  };
   return parse_parameter_list(params, opts, TokenType::IN);
 }
 
 bool Parser::parser_function_parameter_group(
     std::vector<ParameterASTNode> &params) {
-  ParameterOptsASTNode opts;
-  opts.allow_assignment = false;
-  opts.allow_ranges = true;
-  opts.fatal_on_assign = true;
-  opts.allow_void_assignment = true;
+  static constexpr ParameterOptsASTNode opts {
+    .allow_assignment = false,
+    .allow_ranges = true,
+    .fatal_on_assign = true,
+    .allow_void_assignment = true,
+  };
   return parse_parameter_list(params, opts, TokenType::R_PAREN);
 }
 
 bool Parser::parser_for_condition_group(
     std::vector<LoopConditionASTNode> &params) {
-  LoopOptsASTNode opts;
+
 
   bool is_range = false;
   for (size_t i = current; i < tokens.size(); i++) {
@@ -451,7 +463,7 @@ bool Parser::parser_for_condition_group(
         tokens[i].type == TokenType::R_PAREN)
       break;
   }
-
+  LoopOptsASTNode opts;
   opts.allow_Loop_Range_style = is_range;
   opts.allow_C_style = !is_range;
 
@@ -459,12 +471,14 @@ bool Parser::parser_for_condition_group(
 }
 
 bool Parser::parser_variable_parameter_group(
-    std::vector<ParameterASTNode> &params) {
-  ParameterOptsASTNode opts;
-  opts.allow_assignment = false;
-  opts.allow_ranges = false;
-  opts.fatal_on_assign = false;
-  opts.allow_void_assignment = false;
+    std::vector<ParameterASTNode> &params)
+{
+  static constexpr ParameterOptsASTNode opts {
+    .allow_assignment = false,
+    .allow_ranges = false,
+    .fatal_on_assign = false,
+    .allow_void_assignment = false,
+  };
   return parse_parameter_list(params, opts, TokenType::SEMI_COLON);
 }
 
@@ -500,7 +514,7 @@ void Parser::report_error(const Token &tok, std::string_view msg) {
                ConsoleColor::RESET);
 }
 
-[[maybe_unused]] static std::string DecodeString(const std::string &text) {
+[[maybe_unused]] constexpr static std::string DecodeString(const std::string &text) {
   std::string out;
 
   if (text.empty())
@@ -553,7 +567,7 @@ void Parser::report_error(const Token &tok, std::string_view msg) {
   return out;
 }
 
-ParserRule Parser::get_rule(const TokenType type) {
+constexpr ParserRule Parser::get_rule(const TokenType type) {
   switch (type) {
   case TokenType::INT_LITERAL:
   case TokenType::FLOAT_LITERAL:
@@ -568,6 +582,7 @@ ParserRule Parser::get_rule(const TokenType type) {
     return {Precedence::NONE, &Parser::parse_identifier, nullptr};
 
   case TokenType::BANG:
+  case TokenType::AMPERSAND:
     return {Precedence::NONE, &Parser::parse_prefix, nullptr};
 
   case TokenType::PLUS_PLUS:
@@ -579,6 +594,8 @@ ParserRule Parser::get_rule(const TokenType type) {
   case TokenType::MINUS_EQUAL:
   case TokenType::MUL_EQUAL:
   case TokenType::DIV_EQUAL:
+  case TokenType::REG_MATCH:
+  case TokenType::MATCH_ADVANCE:
     return {Precedence::ASSIGNMENT, nullptr, &Parser::parse_assignment};
 
   case TokenType::OR:
@@ -620,6 +637,9 @@ ParserRule Parser::get_rule(const TokenType type) {
     return {Precedence::CALL_INDEX, &Parser::parse_array_literal,
             &Parser::parse_index};
 
+  case TokenType::LENGTH:
+    return {Precedence::CALL_INDEX, &Parser::parse_length_statement, nullptr};
+
   case TokenType::RANGE:
     return {Precedence::COMPARISON, nullptr, &Parser::parse_range_infix};
 
@@ -639,12 +659,10 @@ ParserRule Parser::get_rule(const TokenType type) {
   case TokenType::SWITCH:
   case TokenType::UNWRAP:
   case TokenType::EXIT:
-  case TokenType::LENGTH:
   case TokenType::JOIN:
   case TokenType::EVAL:
   case TokenType::NAMESPACE:
   case TokenType::HASH:
-  case TokenType::AMPERSAND:
   case TokenType::ARROW:
   case TokenType::MAP_ARROW:
   case TokenType::QUESTION:
@@ -656,8 +674,10 @@ ParserRule Parser::get_rule(const TokenType type) {
   case TokenType::LBRACE:
   case TokenType::RBRACKET:
   case TokenType::AUTO:
+  case TokenType::CONSTEXPR:
   case TokenType::CONST:
   case TokenType::VOID:
+  case TokenType::MUT:
   case TokenType::END_OF_FILE:
     return {Precedence::NONE, nullptr, nullptr};
   }
@@ -668,12 +688,51 @@ std::expected<TypeSpecifier, ParseError> Parser::parse_type() {
   TypeSpecifier type_info;
   std::string full_type_name;
 
-  if (check(TokenType::CONST)) {
-    const Token t = advance();
-    type_info.is_const = true;
-    log_mov("Tracking 'const'", t);
-    full_type_name = "const ";
+  while (true)
+  {
+    if (check(TokenType::MUT)) {
+      if (type_info.is_const || type_info.is_constexpr)
+      {
+        report_error(peek(), "Invalid type declaration - Cannot have mutability with a constant[constexpr/const] to a target.");
+        return std::unexpected(ParseError::InvalidType);
+      }
+
+      const Token t = advance();
+      type_info.is_mutable = true;
+      log_mov("Tracking mut", t);
+      full_type_name = "mut ";
+    }
+    else if (check(TokenType::CONST)) {
+      if (type_info.is_mutable || type_info.is_constexpr)
+      {
+        report_error(peek(), "Invalid type declaration - Type cannot be [run/compile] time constant[const/constexpr] if it is already declared mutable defined to a target.");
+        return std::unexpected(ParseError::InvalidType);
+      }
+
+      const Token t = advance();
+      type_info.is_const = true;
+      log_mov("Tracking 'const'", t);
+      full_type_name = "const ";
+    } else if (check(TokenType::CONSTEXPR))
+    {
+      if (type_info.is_mutable || type_info.is_const)
+      {
+        report_error(peek(), "Invalid type declaration - Type cannot be [run/compile] time constant[const/constexpr] if it is already declared mutable defined to a target.");
+        return std::unexpected(ParseError::InvalidType);
+      }
+
+      const Token t = advance();
+      type_info.is_constexpr = true;
+      log_mov("Tracking constexpr", t);
+      full_type_name = "constexpr ";
+    } else
+    {
+      break;
+    }
   }
+
+  if (check(TokenType::AMPERSAND))
+    full_type_name += advance().value;
 
   if (check(TokenType::IDENTIFIER))
     full_type_name += advance().value;
@@ -738,7 +797,7 @@ std::expected<TypeSpecifier, ParseError> Parser::parse_type() {
     report_error(
         peek(), "Malformed type signature: Unbalanced brackets or parantheses");
 
-  if (full_type_name.empty() || full_type_name == "const ") {
+  if (full_type_name.empty() || full_type_name == "const " || full_type_name == "mut " || full_type_name == "constexpr ") {
     report_error(
         peek(),
         std::format("Expected a valid type specifier, got '{}'", peek().value));
@@ -789,16 +848,23 @@ std::vector<std::unique_ptr<ASTNode>> Parser::parse_program() {
   return program_nodes;
 }
 
-std::expected<std::unique_ptr<ASTNode>, ParseError>
+constexpr std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_assignment(std::unique_ptr<ASTNode> left) {
   const Token op = tokens[current - 1];
 
   // Ensure the target is a variable, an array index or an object property
   // access. For example, separated with 'is.array'?
 
-  if (!dynamic_cast<VariableExprASTNode *>(left.get()) &&
-      !dynamic_cast<IndexASTNode *>(left.get()) &&
-      !dynamic_cast<MemberAccessASTNode *>(left.get())) {
+  bool is_valid_lhs = dynamic_cast<VariableExprASTNode *>(left.get()) ||
+      dynamic_cast<IndexASTNode *>(left.get()) ||
+      dynamic_cast<MemberAccessASTNode *>(left.get());
+
+  if (const auto *unary = dynamic_cast<UnaryExprASTNode*>(left.get())) {
+    if (unary->op.type == TokenType::MUL)
+      is_valid_lhs = true;
+  }
+
+  if (!is_valid_lhs) {
     report_error(op, "Invalid left-hand side target in assignment expression");
     return std::unexpected(ParseError::InvalidAssignmentTarget);
   }
@@ -999,7 +1065,7 @@ Parser::parse_array_literal() {
   return std::make_unique<ArrayLiteralASTNode>(std::move(elements));
 }
 
-std::expected<std::unique_ptr<ASTNode>, ParseError>
+constexpr std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_range_infix(std::unique_ptr<ASTNode> left) {
   // Pratt loop already consumes '..' token.
   const Token op_tok = tokens[current - 1];
@@ -1026,12 +1092,15 @@ Parser::parse_range_infix(std::unique_ptr<ASTNode> left) {
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
-Parser::parse_expression(Precedence min_precedence) {
+Parser::parse_expression(const Precedence min_precedence) {
   const Token token = advance();
   const ParserRule rule = get_rule(token.type);
 
   if (peek().type == TokenType::END_OF_FILE)
     return std::unexpected(ParseError::UnexpectedToken);
+
+  if (peek().type == TokenType::MUT)
+    advance();
 
   if (!rule.nud) {
     report_error(token,
@@ -1060,29 +1129,35 @@ Parser::parse_expression(Precedence min_precedence) {
   return left;
 }
 
-std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_literal() {
+constexpr std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_literal() {
   return std::make_unique<LiteralASTNode>(tokens[current - 1].value);
 }
 
-std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_identifier() {
+constexpr std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_identifier() {
   return std::make_unique<VariableExprASTNode>(tokens[current - 1].value);
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_prefix() {
   Token op = tokens[current - 1];
+
+  bool is_mut = false;
+  if (op.type == TokenType::AMPERSAND && check(TokenType::MUL)) {
+    advance();
+    is_mut = true;
+  }
   auto operand_res = parse_expression(Precedence::UNARY);
 
   if (!operand_res.has_value())
     return std::unexpected(operand_res.error());
 
   return std::make_unique<UnaryExprASTNode>(std::move(operand_res.value()), op,
-                                            false);
+                                            false, is_mut);
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_postfix(std::unique_ptr<ASTNode> left) {
   return std::make_unique<UnaryExprASTNode>(std::move(left),
-                                            tokens[current - 1], true);
+                                            tokens[current - 1], true, false);
 }
 
 std::expected<std::unique_ptr<ASTNode>, ParseError>
@@ -1142,7 +1217,7 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_grouping() {
   return expr_rr;
 }
 
-static std::string qualified_callee_name(const ASTNode *node) noexcept {
+constexpr static std::string qualified_callee_name(const ASTNode *node) noexcept {
   if (!node)
     return "";
   if (const auto *v = dynamic_cast<const VariableExprASTNode *>(node))
@@ -1251,11 +1326,9 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_block() {
 std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_paren() {
   const Token op = peek();
 
-  if (!consume(TokenType::L_PAREN, "Expected '('")) {
+  if (!consume(TokenType::L_PAREN, std::format("Expected '(' opening paren in {}", op.value)))
     return std::unexpected(ParseError::MissingOpeningParen);
-  }
 
-  log_mov("Opening '('", op);
   auto node = parse_expression(Precedence::NONE);
 
   if (!node)
@@ -1264,10 +1337,8 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_paren() {
   if (!consume(TokenType::R_PAREN,
                std::format("Parenthesized expression opened at "
                            "Line {}, Column {} is missing closing ')'",
-                           op.line, op.column)))
+                           peek().value, op.line, op.column)))
     return std::unexpected(ParseError::MissingClosingParen);
-
-  log_mov("Closing ')'", tokens[current - 1]);
 
   return std::move(node.value());
 }
@@ -1415,6 +1486,13 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_if_body(const 
    *  If I try to make it optional here, then the entirity of code might fail.
    *  Sigh, I am very disappointed with this.
    */
+
+  if (check(TokenType::COLON))
+  {
+    report_error(peek(), "Forbidden Colon initialization after condition - In if statement, colon ':' is not allowed after condition.");
+    return std::unexpected(ParseError::UnexpectedToken);
+  }
+
   if (header.enforce_brace)
   {
     if (!check(TokenType::LBRACE))
@@ -1468,7 +1546,7 @@ Parser::parse_if_statement() {
   auto if_body = parse_if_body(if_header.value());
   if (!if_body)
     return std::unexpected(
-        if_body.error()); // Error already handled by body parser
+        if_body.error()); // Error already handled by body Parser
 
   branches.emplace_back(
     std::move(if_header.value().initializer),
@@ -1552,7 +1630,7 @@ Parser::parse_function_statement() {
     if (!parser_function_parameter_group(params))
       return std::unexpected(
           ParseError::MalformedParameters); // Erro reported inside parameter
-                                            // group parser
+                                            // group Parser
   }
 
   if (!consume(TokenType::R_PAREN, " Expected ')' after parameter list"))
@@ -1753,6 +1831,28 @@ Parser::parse_namespace_statement() {
                                             std::move(block_ptr));
 }
 
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_break_statement() {
+  if (Token tok = advance(); !consume(TokenType::SEMI_COLON, std::format("Invalid forbidden syntax or expression '{}', expected ';' in {}", peek().value, tok.value)))
+    return std::unexpected(ParseError::MissingSemiColon);
+
+  return std::make_unique<BreakASTNode>();
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_continue_statement() {
+  if (Token tok = advance(); !consume(TokenType::SEMI_COLON, std::format("Expected ';' in {}", tok.value)))
+    return std::unexpected(ParseError::MissingSemiColon);
+
+  return std::make_unique<ContinueASTNode>();
+}
+
+std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_length_statement() {
+  auto arg = parse_paren();
+  if (!arg)
+    return std::unexpected(arg.error());
+
+  return std::make_unique<LengthASTNode>(std::move(arg.value()));
+}
+
 std::expected<std::unique_ptr<ASTNode>, ParseError>
 Parser::parse_for_statement() {
   Token op_tok;
@@ -1812,13 +1912,21 @@ std::expected<std::unique_ptr<ASTNode>, ParseError> Parser::parse_statement() {
   case TokenType::FOR:
     return parse_for_statement();
 
+  case TokenType::BREAK:
+    return parse_break_statement();
+
+  case TokenType::CONTINUE:
+    return parse_continue_statement();
+
   case TokenType::FUNCTION:
     return parse_function_statement();
 
   case TokenType::RETURN:
     return parse_return_statement();
+
   case TokenType::NAMESPACE:
     return parse_namespace_statement();
+
   case TokenType::JOIN:
     return parse_join();
   }
