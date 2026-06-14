@@ -17,7 +17,7 @@ static bool peek_match(const std::string_view &text, size_t current_index,
 TokenType identifier_or_keyword(const std::string_view &word) {
   if (word == "import")
     return TokenType::IMPORT;
-  if (word == "function")
+  if (word == "func")
     return TokenType::FUNCTION;
   if (word == "if")
     return TokenType::IF;
@@ -59,10 +59,14 @@ TokenType identifier_or_keyword(const std::string_view &word) {
     return TokenType::NAMESPACE;
   if (word == "auto")
     return TokenType::AUTO;
+  if (word == "constexpr")
+    return TokenType::CONSTEXPR;
   if (word == "const")
     return TokenType::CONST;
   if (word == "void")
     return TokenType::VOID;
+  if (word == "mut")
+    return TokenType::MUT;
   return TokenType::IDENTIFIER;
 }
 
@@ -249,6 +253,25 @@ std::vector<Token> tokenize(const std::string_view &Toks) {
                             t_s_column);
         i++;
         c_column++;
+      }
+      continue;
+    }
+
+    if (c == '~')
+    {
+      if (peek_match(Toks, i, '='))
+      {
+        Tokens.emplace_back(TokenType::REG_MATCH, Toks.substr(i, 2), c_line, t_s_column);
+        i += 2;
+        c_column += 2;
+      } else if (peek_match(Toks, i, '+'))
+      {
+        Tokens.emplace_back(TokenType::MATCH_ADVANCE, Toks.substr(i, 2), c_line, t_s_column);
+        i += 2;
+        c_column +=2;
+      } else
+      {
+        std::println("Invalid expression '~' found at Line {}, Column {}", c_line, c_column);
       }
       continue;
     }
@@ -644,6 +667,10 @@ std::string token_return(TokenType type) {
     return "PLUS_EQUAL";
   case TokenType::MINUS_EQUAL:
     return "MINUS_EQUAL";
+  case TokenType::REG_MATCH:
+    return "REG_MATCH";
+  case TokenType::MATCH_ADVANCE:
+    return "MATCH_ADVANCE";
   case TokenType::R_S_O:
     return "R_S_O";
   case TokenType::L_S_O:
@@ -718,8 +745,12 @@ std::string token_return(TokenType type) {
     return "AUTO";
   case TokenType::CONST:
     return "CONST";
+  case TokenType::CONSTEXPR:
+    return "CONSTEXPR";
   case TokenType::VOID:
     return "VOID";
+  case TokenType::MUT:
+    return "MUT";
   case TokenType::IDENTIFIER:
     return "IDENTIFIER";
   case TokenType::END_OF_FILE:
