@@ -1,32 +1,31 @@
 #ifndef TOKEN_HPP
 #define TOKEN_HPP
 
-#include <cstddef>
 #include <cstdint>
 #include <string_view>
 enum class TokenType : std::int32_t {
-  IMPORT,   // import <>
-  FUNCTION, // function name(type: Parmaeter) -> r_type: {}
-  IF,       // if (condition) {}
-  ELSEIF,   // elseif (condition) {}
-  ELSE,     // else {}
-  FOR,      // for ( condition ) {}
+  IMPORT,   // import <> Done
+  FUNCTION, // function name(type: Parmaeter) -> r_type: {} Done
+  IF,       // if (condition) {} Done
+  ELSEIF,   // elseif (condition) {} Done
+  ELSE,     // else {} Done
+  FOR,      // for ( condition ) {} Done
   WHILE,    // while ( condition ) {}
-  LET,      // let (x, y, z)
-  RETURN,   // return(x, y, z)
-  BREAK,    // break
-  CONTINUE, // continue
-  OR,       // or ||
-  AND,      // and &&
+  LET,      // let (x, y, z) Done
+  RETURN,   // return(x, y, z) Done
+  BREAK,    // break Done
+  CONTINUE, // continue Done
+  OR,       // or || Kind of done
+  AND,      // and && Done
   TRUE,     // true
   FALSE,    // false
-  IN,       // in
+  IN,       // in Done
   MAIN,     // function main(type: o_Param) -> int: {}
   SWITCH,   // switch (variable or something) { (options) => do; }
   UNWRAP,   // unwrap(variable)
   EXIT,     // exit(i)
-  LENGTH,   // len()
-  JOIN,     // join()
+  LENGTH,   // len() // done
+  JOIN,     // join() // done
   EVAL,     // eval()
   NAMESPACE,
   HASH,               // #
@@ -39,6 +38,8 @@ enum class TokenType : std::int32_t {
   MINUS_EQUAL,        // -=
   MUL_EQUAL,          // *=
   DIV_EQUAL,          // /=
+  REG_MATCH,          // ~=
+  MATCH_ADVANCE,      // ~+
   R_S_O,              // <<
   L_S_O,              // >>
   LTE,                // <=
@@ -73,8 +74,10 @@ enum class TokenType : std::int32_t {
   RAW_STRING_LITERAL, // 'hello'
   BACK_TICK_LITERAL,  // '`'
   AUTO,               // auto
+  CONSTEXPR,
   CONST,              // const
   VOID,               // void
+  MUT,                // mut
   IDENTIFIER,         //
   END_OF_FILE
 };
