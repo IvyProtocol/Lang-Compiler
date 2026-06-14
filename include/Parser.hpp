@@ -54,10 +54,11 @@ enum class ParseError {
   UnexpectedEndOfFile
 };
 
+using ast_node = ASTNode;
 using NudFunc =
-    std::expected<std::unique_ptr<ASTNode>, ParseError> (Parser::*)();
-using LedFunc = std::expected<std::unique_ptr<ASTNode>, ParseError> (Parser::*)(
-    std::unique_ptr<ASTNode> left);
+    std::expected<std::unique_ptr<ast_node>, ParseError> (Parser::*)();
+using LedFunc = std::expected<std::unique_ptr<ast_node>, ParseError> (Parser::*)(
+    std::unique_ptr<ast_node> left);
 
 struct ParserRule {
   Precedence precedence;
@@ -81,8 +82,8 @@ struct Parser {
   };
 
   struct alignas(8) ParsedIfHeader {
-    std::unique_ptr<ASTNode> initializer{nullptr};
-    std::unique_ptr<ASTNode> condition{nullptr};
+    std::unique_ptr<ast_node> initializer{nullptr};
+    std::unique_ptr<ast_node> condition{nullptr};
     bool has_paren{false};
     bool enforce_brace{false};
 
@@ -137,55 +138,80 @@ struct Parser {
   bool parser_function_parameter_group(std::vector<ParameterASTNode> &params);
   bool parser_variable_parameter_group(std::vector<ParameterASTNode> &params);
   bool parser_for_condition_group(std::vector<LoopConditionASTNode> &params);
-  static bool is_statement_start(TokenType type);
-  static ParserRule get_rule(TokenType type);
+  constexpr static bool is_statement_start(TokenType type);
+  constexpr static ParserRule get_rule(TokenType type);
   void report_error(const Token &tok, std::string_view msg);
   void synchronize();
 
   std::expected<TypeSpecifier, ParseError> parse_type();
-  std::vector<std::unique_ptr<ASTNode>> parse_program();
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
+
+  std::vector<std::unique_ptr<ast_node>> parse_program();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
   parse_variable_declaration(bool let_allowed, bool semi_allowed);
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_assignment(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_array_literal();
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_range_infix(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
+
+  constexpr std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_assignment(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_array_literal();
+
+  constexpr std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_range_infix(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
   parse_expression(Precedence min_precedence);
 
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_literal();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_identifier();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_prefix();
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_postfix(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_binary(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_member_access(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_grouping();
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_call(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
-  parse_index(std::unique_ptr<ASTNode> left);
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_block();
+  constexpr std::expected<std::unique_ptr<ast_node>, ParseError> parse_literal();
+
+  constexpr std::expected<std::unique_ptr<ast_node>, ParseError> parse_identifier();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_prefix();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_postfix(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_binary(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_member_access(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_grouping();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_call(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
+  parse_index(std::unique_ptr<ast_node> left);
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_block();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_paren();
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_paren_expression();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_import_statement();
 
   std::expected<ParsedIfHeader, ParseError> parse_if_header();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_paren();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_import_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_paren_expression();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_body(const ParsedIfHeader& header);
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_if_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_for_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_return_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_join();
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_if_body(const ParsedIfHeader& header);
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_if_statement();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_for_statement();
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_break_statement();
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_continue_statement();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_length_statement();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_return_statement();
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_join();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError>
   parse_function_statement();
 
-  std::expected<std::unique_ptr<ASTNode>, ParseError>
+  std::expected<std::unique_ptr<ast_node>, ParseError>
   parse_namespace_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_statement();
-  std::expected<std::unique_ptr<ASTNode>, ParseError> parse_primary();
+
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_statement();
+  std::expected<std::unique_ptr<ast_node>, ParseError> parse_primary();
 };
 
 #endif
